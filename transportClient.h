@@ -5,8 +5,8 @@
  *      Author: okh
  */
 
-#ifndef TRANSPORT_H_
-#define TRANSPORT_H_
+#ifndef TRANSPORTCLIENT_H_
+#define TRANSPORTCLIENT_H_
 
 #include "TaskMngr.h"
 
@@ -26,4 +26,4 @@ void getParameters(u16* id, byte_ptr key, u08 size);
 
 
 
-#endif /* TRANSPORT_H_ */
+#endif /* TRANSPORTCLIENT_H_ */
