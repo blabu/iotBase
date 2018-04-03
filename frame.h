@@ -23,12 +23,12 @@ extern const string_t header;
  * buf - указатель на полезную информацию для передачи (УЖЕ ЗАШИФРОВАННУЮ)
  * Возвращает результирующий ПОЛНЫЙ размер сообщения
  * */
-u16 formFrame(u16 maxSize, byte_ptr result, u16 command, u16 bufSize, byte_ptr buf);
+u16 formFrame(u16 maxSize, byte_ptr result, u16 command, u16 bufSize, const byte_ptr buf);
 
 /*
  * Возвращает распарсенный идентификатор и полезное сообщение (ЕЩЕ ЗАШИФРОВАННОЕ)
  * */
-u16 parseFrame(u16 sourceSize, byte_ptr source, u16 sz, byte_ptr result);
+u16 parseFrame(u16 sourceSize, const byte_ptr source, u16 sz, byte_ptr result);
 
 
 #endif /* FRAME_H_ */

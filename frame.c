@@ -35,7 +35,7 @@ static void fillRightStr(u16 size, string_t str, char symb) {
  * buf - указатель на полезную информацию для передачи (УЖЕ ЗАШИФРОВАННУЮ)
  * Возвращает результирующий ПОЛНЫЙ размер сообщения
  * */
-u16 formFrame(u16 maxSize, byte_ptr result, u16 command, u16 bufSize, byte_ptr buf) {
+u16 formFrame(u16 maxSize, byte_ptr result, u16 command, u16 bufSize, const byte_ptr buf) {
 	if(strSize(header)+MESSAGE_SIZE+ID_SIZE+strSize(delimSymbol)+bufSize+CRC_SIZE > maxSize) return 0; // Все сообщение не влезит в буфер
 
 	char temp[6];
@@ -67,8 +67,8 @@ u16 formFrame(u16 maxSize, byte_ptr result, u16 command, u16 bufSize, byte_ptr b
 /*
  * Возвращает распарсенный идентификатор и полезное сообщение (ЕЩЕ ЗАШИФРОВАННОЕ)
  * */
-u16 parseFrame(u16 sourceSize, byte_ptr source, u16 sz, byte_ptr result) {
-	if(str1_str2(header, (string_t)source)) { // Проверяем заголовок
+u16 parseFrame(u16 sourceSize, const byte_ptr source, u16 sz, byte_ptr result) {
+	if(str1_str2(header, (const string_t)source)) { // Проверяем заголовок
 		char temp[5];
 		memCpy(temp,source+strSize(header),MESSAGE_SIZE); // Достаем размер сообщения
 		temp[4] = '\0';

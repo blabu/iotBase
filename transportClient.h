@@ -25,5 +25,4 @@ void saveParameters(u16 id, byte_ptr key, u08 size);
 void getParameters(u16* id, byte_ptr key, u08 size);
 
 
-
 #endif /* TRANSPORTCLIENT_H_ */

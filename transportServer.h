@@ -13,24 +13,24 @@
 
 typedef struct {
 	u16 Id;
-	byte_ptr Key;
-	u08 KeySize;
+	u08 Key[16];
 } Device_t;
 
-// Для работы протокола необходимо реализовать эти функции. Каждая из функций ОБЯЗАТЕЛЬНО должна вызывать execCallBack себя же.
 
 // Функция непосредственной отправки данных
-void sendTo(u08 sessionId, u16 size, byte_ptr data);
+void sendToClient(u16 id, PAIR(u16, byte_ptr) *data);
 
 // Функция получения данных полученные данные будут записаны по указателю result, но не более размера size
-void receiveFrom(u08* sessionId, u16 size, byte_ptr result);
+void receiveFromClient(u16 id, PAIR(u16, byte_ptr) *result);
+
+// Вернет идентификатор следующего готового узла для работы. (0 означает, что нет готовых узлов)
+u16 getNextReadyDevice();
 
 // Функция сохрания параметры в память
-void saveParameters(ListNode_t* DeviceList);
+void saveAllParameters(ListNode_t* DeviceList);
 
 //Функция получения параметров из памяти. Должна расположить данные по переданным указателям
-void getParameters(ListNode_t* DeviceList);
-
+void getAllParameters(ListNode_t* DeviceList);
 
 
 #endif /* TRANSPORTSERVER_H_ */
