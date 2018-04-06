@@ -16,12 +16,13 @@ typedef struct {
 	u08 Key[16];
 } Device_t;
 
+typedef PAIR(u16, byte_ptr) ClientData_t;
 
 // Функция непосредственной отправки данных
-void sendToClient(u16 id, PAIR(u16, byte_ptr) *data);
+void sendToClient(u16 id,  ClientData_t *data);
 
 // Функция получения данных полученные данные будут записаны по указателю result, но не более размера size
-void receiveFromClient(u16 id, PAIR(u16, byte_ptr) *result);
+void receiveFromClient(u16 id, ClientData_t *result);
 
 // Вернет идентификатор следующего готового узла для работы. (0 означает, что нет готовых узлов)
 u16 getNextReadyDevice();

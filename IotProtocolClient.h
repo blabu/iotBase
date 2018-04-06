@@ -13,7 +13,7 @@
  * YYYY - unique device identificator
  *  '=' - delim symbol between identifier and arguments
  *  AAA...AAA - arguments of function (may be binary) and can be crypted
- *  cc - CRC16 binary не зашифрованный
+ *  cc - CRC16 binary не зашифрованный МЛАДШИМ БАЙТОМ ВПЕРЕД
  *  Для шифрования используется симметричный алгоритм AES128 (с ключом в 16 байт)
  *  С каждой сессией передачи ключ меняется
  *  Заголовок пакета должен быть в формате ASCII строк для обеспечения совместивмости с предыдущими версиями
@@ -25,7 +25,8 @@
 
 #include "TaskMngr.h"
 
-#define PROTOCOL_BUFFER_SIZE 64 // Размер буферов приема и передачи
+#define PROTOCOL_BUFFER_SIZE 32 // Размер буферов приема и передачи
+#define KEY_SIZE 16
 
 /*
  * Инициализация системы если Id не нулевой

@@ -22,6 +22,7 @@ extern const string_t header;
  * bufSize - размер полезной информации
  * buf - указатель на полезную информацию для передачи (УЖЕ ЗАШИФРОВАННУЮ)
  * Возвращает результирующий ПОЛНЫЙ размер сообщения
+ * КОНТРОЛЬНАЯ СУММА МЛАДШИМ БАЙТОМ ВПЕРЕД!!!!!!!!!!
  * */
 u16 formFrame(u16 maxSize, byte_ptr result, u16 command, u16 bufSize, const byte_ptr buf);
 

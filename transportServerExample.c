@@ -5,23 +5,39 @@
  *      Author: okh
  */
 #include "transportServer.h"
+#include "frame.h"
+#include "stdio.h"
 
 // Функция непосредственной отправки данных
-void sendToClient(u16 id, PAIR(u16, byte_ptr)* data) {
-	for(u16 i = 0; i<data->first; i++) printf("%d ", data->second[i]);
-	execCallBack((void*)((u32)sendToClient + id));
+void sendToClient(u16 id, ClientData_t* data) {
+	printf("Session id %d, Try send %d bytes\n", id, data->first);
+	u08 i = 0;
+	for(; i < 12; i++) {
+		printf("%c ", data->second[i]);
+	}
+	for(;i < data->first;i++) {
+		printf("0x%x ", data->second[i]);
+	}
+	printf("Finish\n");
+	execCallBack((void*)((u32*)sendToClient + id));
 }
 
 // Функция получения данных полученные данные будут записаны по указателю result, но не более размера size
-void receiveFromClient(u16 id, PAIR(u16, byte_ptr) *result) {
-	for(u16 i = 0; i<result->first; i++) result->second = i+0x30;
-	execCallBack((void*)((u32)receiveFromClient + id));
+void receiveFromClient(u16 id, ClientData_t* result) {
+	printf("Receive pointer %p\n",result->second);
+	u08 s = formFrame(result->first, result->second, 0x35, 12,"Hello wor123");
+	printf("Receive from client %s size is %d\n",result->second,s);
+	execCallBack((void*)((u32*)receiveFromClient + id));
 }
 
 // Вернет идентификатор следующего готового узла для работы. (Отрицательное число означает, что нет готовых узлов)
-s32 getNextReady() {
-	printf("Try next");
-	return 10;
+u16 getNextReadyDevice() {
+	static u08 count = 0;
+	count++;
+	if(!(count % 25)) {
+		return count;
+	}
+	return 0;
 }
 
 // Функция сохрания параметры в память

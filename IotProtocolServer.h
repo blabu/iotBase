@@ -9,10 +9,11 @@
 #define IOTPROTOCOLSERVER_H_
 
 #ifndef PROTOCOL_BUFFER_SIZE
-#define PROTOCOL_BUFFER_SIZE 64 // Размер буферов приема и передачи
+#define PROTOCOL_BUFFER_SIZE 32 // Размер буферов приема и передачи
 #endif
+#include "TaskMngr.h"
 
-void StartServerIot();
+void ServerIotWork(BaseSize_t arg_n, BaseParam_t arg_p);
 
 
 #endif /* IOTPROTOCOLSERVER_H_ */

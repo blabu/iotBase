@@ -10,14 +10,13 @@
 #include "frame.h"
 #include "crypt.h"
 #include "List.h"
+#include "logging.h"
 
 #define KEY_SIZE 16
-
-static const string_t keyAttribute = "KEY;";
-static const string_t registerAttribute = "?;REG";
+//static const string_t keyAttribute = "KEY;";
 
 static bool_t isSecure = FALSE;
-static ListNode_t* DeviceList; // Хранит указатель на голову списка устройств
+static ListNode_t* DeviceList = NULL; // Хранит указатель на голову списка устройств
 
 typedef struct {
 	u16 sessionId;
@@ -28,8 +27,8 @@ typedef struct {
 
 
 static u16 generateNewId(u08 type) {
-	u08 temp = RandomSimple() & 0xFF;
-	return ((u16)type<<8) & temp;
+	u16 temp = RandomSimple() & 0xFF;
+	return temp | (u16)(type<<8);
 }
 
 static void generateKey(byte_ptr key) {
@@ -37,11 +36,12 @@ static void generateKey(byte_ptr key) {
 		u32 temp = RandomSimple();
 		*((u32*)(key+i)) = temp;
 	}
+	//memCpy(key,"1234567890123456",KEY_SIZE);
 }
 
 static void freeClient(Client_t* c) {
 	freeMem(c->buff.second);
-	freeMem(c);
+	freeMem((byte_ptr)c);
 }
 
 Device_t* findDeviceById(u16 devId) {
@@ -57,78 +57,103 @@ Device_t* findDeviceById(u16 devId) {
 	return result;
 }
 
+static void ClientWork(BaseSize_t count, BaseParam_t client);
+
+static void NewDeviceCreate(BaseSize_t id, BaseParam_t client) {
+	u08 buff[PROTOCOL_BUFFER_SIZE];
+	Client_t* cl = (Client_t*)client;
+	generateKey(cl->dev->Key);
+	cl->dev->Id = generateNewId(id);  // TODO Убедится в уникальности идентификатора
+	printf("New deviceId %x for type %x\n", cl->dev->Id, id);
+	putToEndList(DeviceList,(void*)cl->dev, sizeof(Device_t)); // Записываем новое устройство в список всех устройств
+	memCpy(buff, &(cl->dev->Id), sizeof(cl->dev->Id));
+	memCpy(buff+sizeof(cl->dev->Id),cl->dev->Key, KEY_SIZE); // Формируем ответ клиенту с генерированными данными
+	u16 sz = formFrame(cl->buff.first, cl->buff.second,id,sizeof(cl->dev->Id)+KEY_SIZE, buff); // Отправляем запрос
+	if(sz) {
+		cl->buff.first = sz;
+		printf("Send to client in session %d,  %s\n",cl->sessionId, cl->buff.second);
+		changeCallBackLabel((void*)((u32*)NewDeviceCreate + cl->sessionId), (void*)((u32*)sendToClient + cl->sessionId));
+		SetTask(sendToClient, cl->sessionId, (BaseParam_t)(&cl->buff));
+		return;
+	}
+	else execCallBack((void*)((u32*)NewDeviceCreate + cl->sessionId));
+}
+
+static void DeviceWork(BaseSize_t count, BaseParam_t client) { // Работа с найденым устройством из списка
+	Client_t* cl = (Client_t*)client;
+	writeLogStr((string_t)(cl->buff.second));// TODO Анализ полученной информации из cl->buff.second
+	execCallBack((void*)((u32*)DeviceWork + cl->sessionId));
+}
+
 static void ClientWork(BaseSize_t count, BaseParam_t client) {
 	u16 id;
 	Client_t* cl = (Client_t*)client;
 	u08 buff[PROTOCOL_BUFFER_SIZE];
-	u16 sz;
 	switch(count) {
 	case 0:
-		count++;
 		id = parseFrame(cl->buff.first,cl->buff.second, PROTOCOL_BUFFER_SIZE, buff);
 		if(id != 0) {
 			cl->dev = findDeviceById(id);
-			if(cl->dev != NULL){
-				sz = cl->buff.first;
-				for(u08 i = 0; i<sz; i+=KEY_SIZE) {
+			if(cl->dev != NULL){ // Нашли такое устройство
+				for(u08 i = 0; i<cl->buff.first; i+=KEY_SIZE) {
 					if(isSecure) AesEcbDecrypt(buff+i,cl->dev->Key,cl->buff.second+i); // Расшифровуем полученное сообщение
 					else memCpy(cl->buff.second+i, buff+i, KEY_SIZE); // Без шифрования
 				}
-				writeLogStr((string_t)cl->buff.second);// Анализ полученной информации из cl->buff.second
+				registerCallBack(ClientWork, count, (BaseParam_t)cl, (void*)((u32*)DeviceWork + cl->sessionId));
+				SetTask(DeviceWork,0,(BaseParam_t)cl);
+				return;
 			}
 			else if(id < 0xFF) {// Значит устройства с таким Id не существует и это регистрация
-				if(str1_str2(registerAttribute,(string_t)buff)) { // Получили атрибут регистрации
-					cl->dev = (Device_t*)allocMem(sizeof(Device_t));
-					if(cl->dev == NULL) {count=0xFF; break;}
-					generateKey(cl->dev->Key);
-					cl->dev->Id = generateNewId(id);  // TODO Убедится в уникальности идентификатора
-					putToEndList(DeviceList,(void*)cl->dev,sizeof(Device_t));
-					count++;
-					memCpy(buff,keyAttribute,strSize(keyAttribute));
-					memCpy(buff+strSize(keyAttribute),cl->dev->Key, KEY_SIZE);
-					sz = formFrame(cl->buff.first, cl->buff.second,cl->dev->Id,strSize(keyAttribute)+KEY_SIZE,buff);
-					if(sz) {
-						cl->buff.first = sz;
-						registerCallBack(ClientWork,count,(BaseParam_t)cl,(void*)((u32)sendToClient+cl->sessionId));
-						sendToClient(cl->sessionId,&cl->buff);
-					}
-					else {
-						count=0xFF;
-						break;
-					}
-				}
+				cl->dev = (Device_t*)allocMem(sizeof(Device_t));
+				if(cl->dev == NULL) {count = 0xFF; break;}
+				count++;
+				registerCallBack(ClientWork, count, (BaseParam_t)cl, (void*)((u32*)NewDeviceCreate + cl->sessionId));
+				SetTask(NewDeviceCreate,id,(BaseParam_t)cl);
+				return;
 			}
 		}
 		count = 0xFF;
 		break;
+	case 1:
+		printf("Call back in session id %d\n",cl->sessionId);
+		//no break
 	default:
-		printf("Finish");
 		freeClient(cl);
-		execCallBack(ClientWork);
+		printf("Finish client work\n");
+		execCallBack((void*)((u32*)ClientWork+cl->sessionId));
 		return;
 	}
 	SetTask(ClientWork,count,(BaseParam_t)cl);
 }
 
-void InitializeServer() {
-	DeviceList = createNewList(NULL);
+static void InitializeServer() {
+	printf("Try init\n");
+	DeviceList = createNewList(10);
 	changeCallBackLabel(InitializeServer,(void*)getAllParameters);
 	getAllParameters(DeviceList);
+	printf("Pointer %p\n",DeviceList);
 }
 
 void ServerIotWork(BaseSize_t arg_n, BaseParam_t arg_p) {
-	u16 sessionId = getNextReady();
+	if(DeviceList == NULL) {
+		registerCallBack(ServerIotWork,arg_n,arg_p,InitializeServer);
+		InitializeServer();
+		return;
+	}
+	u16 sessionId = getNextReadyDevice();
 	if(sessionId) {
 		Client_t* c = (Client_t*)allocMem(sizeof(Client_t));
-		if(c != NULL) {
+		printf("Client pointer %p in session Id %d\n",c,sessionId);
+		if(c != NULL) { // Удалось создать клиента
 			c->sessionId = sessionId;
-			c->buff.first = 32;
+			c->buff.first = PROTOCOL_BUFFER_SIZE;
 			c->buff.second = allocMem(c->buff.first);
+			printf("Client buffer pointer %p\n",c->buff.second);
 			if(c->buff.second != NULL) {
-				registerCallBack(ClientWork, 0, (BaseParam_t)c, (void*)((u32)receiveFromClient+sessionId));
-				receiveFromClient(sessionId,&c->buff);
+				registerCallBack(ClientWork, 0, (BaseParam_t)c, (void*)((u32*)receiveFromClient+sessionId));
+				SetTask(receiveFromClient, sessionId, (BaseParam_t)(&c->buff));
 			}
 		}
 	}
-	SetTimerTask(StartServerIot,sessionId,arg_p,TIME_DELAY_IF_BUSY);
+	SetTimerTask(ServerIotWork,sessionId,arg_p,TIME_DELAY_IF_BUSY);
 }

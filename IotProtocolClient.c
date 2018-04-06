@@ -24,7 +24,6 @@
  *  С каждой сессией передачи ключ меняется
  *  Заголовок пакета должен быть в формате ASCII строк для обеспечения совместивмости с предыдущими версиями
  * */
-#define KEY_SIZE 16
 
 static const string_t OK = "OK;";
 static const string_t ASK = "?;";
@@ -214,17 +213,19 @@ void ReadClient(u16 size, byte_ptr result) {
 			break;
 		}
 		tempId = parseFrame(PROTOCOL_BUFFER_SIZE, BufReceive, sz, temp_ptr);
+		printf("DeviceId is %d, received Id is %d received message is %s and size is %d\n ", DeviceId, tempId, BufReceive, sz);
 		if(tempId != DeviceId) {
 			freeMem(temp_ptr);
 			count = 0xFF;
 			currentStatus = STATUS_NO_RECEIVE;
 			break;
 		}
-		for(u08 i = 0; i<sz; i+=KEY_SIZE) {
+		for(u16 i = 0; i<sz; i+=KEY_SIZE) {
 			if(isSecure) AesEcbDecrypt(temp_ptr+i,CryptKey,BufReceive+i);
 			else memCpy(BufReceive+i,temp_ptr+i,KEY_SIZE);
 		}
 		memCpy(result,BufReceive,size);
+		printf("result %d, %s", size, result);
 		freeMem(temp_ptr);
 		count++;
 		break;
