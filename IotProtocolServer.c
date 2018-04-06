@@ -24,11 +24,26 @@ typedef struct {
 	Device_t* dev;
 } Client_t;
 
-
+static Device_t* findDeviceById(u16 devId) {
+	Device_t* result = NULL;
+	ListNode_t* head = findHead(DeviceList);
+	if(head == NULL) return result;
+	while( (head = head->next) != NULL ) {
+		if(head->data == NULL) break;
+		result = ((Device_t*)(head->data));
+		if( result->Id == devId ) break;
+		result = NULL;
+	}
+	return result;
+}
 
 static u16 generateNewId(u08 type) {
-	u16 temp = RandomSimple() & 0xFF;
-	return temp | (u16)(type<<8);
+	u16 temp = 0;
+	do {
+		temp = RandomSimple() & 0xFF;
+		temp |= (u16)(type<<8);
+	} while(findDeviceById(temp) != NULL);
+	return temp;
 }
 
 static void generateKey(byte_ptr key) {
@@ -42,19 +57,6 @@ static void generateKey(byte_ptr key) {
 static void freeClient(Client_t* c) {
 	freeMem(c->buff.second);
 	freeMem((byte_ptr)c);
-}
-
-Device_t* findDeviceById(u16 devId) {
-	Device_t* result = NULL;
-	ListNode_t* head = findHead(DeviceList);
-	if(head == NULL) return result;
-	while( (head = head->next) != NULL ) {
-		if(head->data == NULL) break;
-		result = ((Device_t*)(head->data));
-		if( result->Id == devId ) break;
-		result = NULL;
-	}
-	return result;
 }
 
 static void ClientWork(BaseSize_t count, BaseParam_t client);
@@ -132,6 +134,10 @@ static void InitializeServer() {
 	changeCallBackLabel(InitializeServer,(void*)getAllParameters);
 	getAllParameters(DeviceList);
 	printf("Pointer %p\n",DeviceList);
+}
+
+void SetClientHandler(TaskMng handler, BaseSize_t arg_n, BaseParam_t arg_p) {
+
 }
 
 void ServerIotWork(BaseSize_t arg_n, BaseParam_t arg_p) {
