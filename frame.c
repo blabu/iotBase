@@ -13,7 +13,10 @@
 #define CRC_SIZE 2
 
 const string_t header = "$V1";
-static const string_t delimSymbol = "=";
+const string_t WriteToServerSymb = ">";
+const string_t ReadFromSeverSymb = "<";
+const string_t OK = "OK;";
+
 
 static u16 crc16(u16 size, byte_ptr data) {
 	return CRC16(size, data);
@@ -35,14 +38,14 @@ static void fillRightStr(u16 size, string_t str, char symb) {
  * buf - указатель на полезную информацию для передачи (УЖЕ ЗАШИФРОВАННУЮ)
  * Возвращает результирующий ПОЛНЫЙ размер сообщения
  * */
-u16 formFrame(u16 maxSize, byte_ptr result, u16 command, u16 bufSize, const byte_ptr buf) {
-	if(strSize(header)+MESSAGE_SIZE+ID_SIZE+strSize(delimSymbol)+bufSize+CRC_SIZE > maxSize) return 0; // Все сообщение не влезит в буфер
+u16 formFrame(u16 maxSize, byte_ptr result, u16 command, u16 dataSize, const byte_ptr data, bool_t isWrite) {
+	if(strSize(header)+MESSAGE_SIZE+ID_SIZE+strSize(WriteToServerSymb)+dataSize+CRC_SIZE > maxSize) return 0; // Все сообщение не влезит в буфер
 
 	char temp[6];
 	//I
 	memCpy(result,header,strSize(header)+1); // Копируем заголовок
 	//II
-	toStringUnsign(2, ID_SIZE+1+bufSize+CRC_SIZE, temp); // Вычисляем размер сообщения согласно протоколу (не входит заголовок и сам размер)
+	toStringUnsign(2, ID_SIZE+1+dataSize+CRC_SIZE, temp); // Вычисляем размер сообщения согласно протоколу (не входит заголовок и сам размер)
 	fillRightStr(MESSAGE_SIZE,temp,'0'); // Формируем размер сообщения
 	temp[4] = '\0';
 	strCat((string_t)result,temp); // Добавляем размер сообщения
@@ -52,11 +55,12 @@ u16 formFrame(u16 maxSize, byte_ptr result, u16 command, u16 bufSize, const byte
 	temp[4] = '\0';
 	strCat((string_t)result,temp); // Добавляем идентификатор
 	//IV
-	strCat((string_t)result,delimSymbol);
+	if(isWrite) strCat((string_t)result,WriteToServerSymb);
+	else strCat((string_t)result,ReadFromSeverSymb);
 	//V
 	u16 size = strSize((string_t)result); // Вычисляем смещение для полезных данных
-	memCpy(result+size,buf,bufSize);
-	size+=bufSize;
+	memCpy(result+size,data,dataSize);
+	size+=dataSize;
 	//VI
 	u16 c = crc16(size, result); // size - это размер абсолютно всего сообщения включая заголовок и длину сообщения без контрольной суммы
 	result[size] = c & 0xFF; // Первый байт младший
@@ -80,7 +84,7 @@ u16 parseFrame(u16 sourceSize, const byte_ptr source, u16 sz, byte_ptr result) {
 		temp[4] = '\0';
 		u16 id = (u16)toInt32(temp);
 		printf("Parse Id %x\n",id);
-		u16 argShift = strSize(header)+MESSAGE_SIZE+ID_SIZE+1; // Смещение от начала буфера для аргументов
+		u16 argShift = strSize(header)+MESSAGE_SIZE+ID_SIZE+strSize(ReadFromSeverSymb); // Смещение от начала буфера для аргументов
 		// включает в себя заголовок, длину сообщения, уникальный идентификатор и символ разделитель
 		u16 crcShift = strSize(header)+MESSAGE_SIZE+size-CRC_SIZE; // Смещение от начала буфера для контрольной суммы
 		// включает в себя загаловок, длину сообщения, само сообщение минус два байта самой контрольной суммы

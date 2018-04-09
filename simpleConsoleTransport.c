@@ -21,7 +21,7 @@ void receiveFrom(u16 size, byte_ptr result){
 	u16 generateId = 0x3537;
 	u08 temp[32];
 	result[0] = 0;
-	strCat((string_t)result,"$V100190035=");
+	strCat((string_t)result,"$V100190035<");
 	memCpy(result+12, &generateId, sizeof(generateId));
 	result[14] = 0;
 	strCat((string_t)result,"1234567890123457");

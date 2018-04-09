@@ -16,6 +16,9 @@
 #include  "TaskMngr.h"
 
 extern const string_t header;
+extern const string_t WriteToServerSymb;
+extern const string_t ReadFromSeverSymb;
+extern const string_t OK;
 
 /*
  * Сформирует сообщение для отправки данных во внутренний буфер
@@ -24,7 +27,7 @@ extern const string_t header;
  * Возвращает результирующий ПОЛНЫЙ размер сообщения
  * КОНТРОЛЬНАЯ СУММА МЛАДШИМ БАЙТОМ ВПЕРЕД!!!!!!!!!!
  * */
-u16 formFrame(u16 maxSize, byte_ptr result, u16 command, u16 bufSize, const byte_ptr buf);
+u16 formFrame(u16 maxSize, byte_ptr result, u16 command, u16 dataSize, const byte_ptr data, bool_t isWrite);
 
 /*
  * Возвращает распарсенный идентификатор и полезное сообщение (ЕЩЕ ЗАШИФРОВАННОЕ)

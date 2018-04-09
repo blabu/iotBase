@@ -12,22 +12,18 @@
 
 #include "logging.h"
 /*
- * Result message has a form $V1xxxxYYYY=AAA...AAAcc
+ * Result message has a form $V1xxxxYYYYPAAA...AAAcc
  * where '$' - start symbol
  * V1 - version of protocol (0 - F posible variant)
  * xxxx - MESSAGE_SIZE message size ascii format (max 'FFFF')
  * YYYY - unique device identificator
- *  '=' - delim symbol between identifier and arguments
+ *  'P' - delim symbol between identifier and arguments
  *  AAA...AAA - arguments of function (may be binary) and can be crypted
  *  cc - CRC16 binary не зашифрованный
  *  Для шифрования используется симметричный алгоритм AES128 (с ключом в 16 байт)
  *  С каждой сессией передачи ключ меняется
  *  Заголовок пакета должен быть в формате ASCII строк для обеспечения совместивмости с предыдущими версиями
  * */
-
-static const string_t OK = "OK;";
-static const string_t ASK = "?;";
-static const string_t keyAttribute = "KEY;";
 
 static bool_t isSecure = FALSE;
 static u16 DeviceId = 0; // Id устройства
@@ -73,6 +69,12 @@ void WriteClient(u16 size, byte_ptr message) {
 	writeLogU32(count);
 	switch(count) {
 	case 0:
+		if(!isCorrect(DeviceId)) {
+			currentStatus = DEVICEID_IS_NULL;
+			execCallBack(WriteClient);
+			return;
+		}
+		currentStatus = 0;
 		if(cypherMsg != NULL) freeMem(cypherMsg);
 		sz = size;
 		while((sz & 0x0F) & 0x0F) sz++; // Дополняем размер до кратного 16-ти байт (размер блока)
@@ -98,7 +100,7 @@ void WriteClient(u16 size, byte_ptr message) {
 			else memCpy(cypherMsg+i,tempMessage+i,KEY_SIZE);
 		}
 		freeMem(tempMessage);
-		sz = formFrame(PROTOCOL_BUFFER_SIZE, BufTransmit, DeviceId, sz, cypherMsg);
+		sz = formFrame(PROTOCOL_BUFFER_SIZE, BufTransmit, DeviceId, sz, cypherMsg, TRUE);
 		if(!sz) {
 			count=0xFF;
 			currentStatus = STATUS_NO_SEND;
@@ -108,48 +110,31 @@ void WriteClient(u16 size, byte_ptr message) {
 		registerCallBack((TaskMng)WriteClient, size, (BaseParam_t)message, sendTo);
 		SetTask((TaskMng)sendTo, sz, BufTransmit);
 		return;
-	case 2: // Получаем ответ (новый ключ шифрования если все впорядке)
+	case 2: // Получаем ответ (новый ключ шифрования если все впорядке. Зашифрованный предыдущим ключом)
 		count++;
 		memSet(BufReceive,PROTOCOL_BUFFER_SIZE,0); // Очищаем буфер
 		registerCallBack((TaskMng)WriteClient, size, (BaseParam_t)message, receiveFrom);
 		SetTask((TaskMng)receiveFrom, PROTOCOL_BUFFER_SIZE, BufReceive); // Ждем ответ
 		return;
-	case 3: // Парсим ответ
+	case 3: // Парсим ответ В ответ должен был прийти новый ключ шифрования
 		sz = getAllocateMemmorySize(cypherMsg);
 		u16 tempId = parseFrame(PROTOCOL_BUFFER_SIZE, BufReceive, sz ,cypherMsg);
 		if(tempId != DeviceId) {
-			if(isCorrect(DeviceId)) { // Если устройство имеет корректный идентификационный номер
 				currentStatus = STATUS_NO_SEND; // То мы получили не свой пакет
 				count = 0xFF;
 				break;
-			}else if(tempId) { // Если наше устройство имеет не корректный номер, то вероятно это была регистрация
-				DeviceId = tempId;
-			}
 		}
-		if(!tempId) {
-			currentStatus = STATUS_NO_SEND; // То мы получили пустышку
-			count = 0xFF;
-			break;
-		}
-		for(u08 i = 0; i<sz; i+=KEY_SIZE) {
-			if(isSecure) AesEcbDecrypt(cypherMsg+i,CryptKey,BufReceive+i); // Расшифровуем полученное сообщение
-			else memCpy(BufReceive+i, cypherMsg+i,KEY_SIZE); // Без шифрования
-		}
+		if(isSecure) AesEcbDecrypt(cypherMsg,CryptKey,BufReceive); // Расшифровуем полученное сообщение
+		else memCpy(BufReceive,cypherMsg,KEY_SIZE); // Без шифрования
 		// Анализ данных
-		s16 poz = findStr(keyAttribute,cypherMsg);
-		if(poz < 0) {
-			currentStatus = STATUS_BAD_KEY;
-			count = 0xFF;
-			break;
-		}
 		count++;
-		memCpy(CryptKey,BufReceive+poz+strSize(keyAttribute),KEY_SIZE);
+		memCpy(CryptKey,BufReceive,KEY_SIZE);
 		registerCallBack((TaskMng)WriteClient,size,(BaseParam_t)message, saveParameters);
 		saveParameters(DeviceId,CryptKey,KEY_SIZE);
 		currentStatus = STATUS_OK;
 		return;
-	case 4: // Отправка подтверждения о получении ключа шифрования
-		sz = formFrame(PROTOCOL_BUFFER_SIZE, BufTransmit, DeviceId, strSize(OK), OK);
+	case 4: // Отправка подтверждения о получении ключа шифрования (не шифрованное)
+		sz = formFrame(PROTOCOL_BUFFER_SIZE, BufTransmit, DeviceId, strSize(OK), OK, TRUE);
 		count++;
 		registerCallBack((TaskMng)WriteClient,size,(BaseParam_t)message, sendTo);
 		SetTask(sendTo,sz, BufTransmit);
@@ -165,7 +150,7 @@ void WriteClient(u16 size, byte_ptr message) {
 }
 
 // Чтение данных с сервера
-// Отправляет запрос на сервер ?;Максимальный размер читаемых данных. В ответ получим данные
+// Отправляет запрос на сервер Максимальный размер читаемых данных. В ответ получим данные
 void ReadClient(u16 size, byte_ptr result) {
 	static u08 count = 0;
 	u08 temp[KEY_SIZE], cypherMsg[KEY_SIZE];
@@ -176,18 +161,19 @@ void ReadClient(u16 size, byte_ptr result) {
 	if(currentStatus && currentStatus != STATUS_OK) count = 0xFF;
 	switch(count){
 	case 0:
+		currentStatus = 0;
 		if(size > PROTOCOL_BUFFER_SIZE) {// Больше этого мы считать не сможем
 			count = 0xFF;
 			currentStatus = STATUS_NO_RECEIVE;
 			break;
 		}
-		temp[0] = 0; strCat(temp,ASK);
-		toString(2,size,temp+strSize(temp));
+		toString(2,size,temp); // Вставляем размер считываемых данных
 		sz = strSize(temp);
 		memSet(temp+sz,KEY_SIZE-sz,0); // Дополняем нулями отсавшееся пространство
 		if(isSecure) AesEcbEncrypt(temp,CryptKey,cypherMsg); // Эта информация точно будет меньше 16-ти байт (одного блока)
 		else memCpy(cypherMsg,temp,sz); // Если без шифрования
-		sz = formFrame(PROTOCOL_BUFFER_SIZE, BufTransmit, DeviceId, KEY_SIZE, cypherMsg);
+		sz = formFrame(PROTOCOL_BUFFER_SIZE, BufTransmit, DeviceId, KEY_SIZE, cypherMsg, FALSE);
+		writeLogStr(BufTransmit);
 		if(sz) { // Если формирование фрейма прошло удачно
 			count++;
 			registerCallBack((TaskMng)ReadClient,size,result,sendTo);
@@ -230,7 +216,7 @@ void ReadClient(u16 size, byte_ptr result) {
 		count++;
 		break;
 	case 3:
-		sz = formFrame(PROTOCOL_BUFFER_SIZE, BufTransmit, DeviceId, strSize(OK), OK);
+		sz = formFrame(PROTOCOL_BUFFER_SIZE, BufTransmit, DeviceId, strSize(OK), OK, TRUE);
 		count++;
 		registerCallBack((TaskMng)ReadClient,size,result,sendTo);
 		sendTo(sz,BufTransmit);
