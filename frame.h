@@ -27,12 +27,12 @@ extern const string_t OK;
  * Возвращает результирующий ПОЛНЫЙ размер сообщения
  * КОНТРОЛЬНАЯ СУММА МЛАДШИМ БАЙТОМ ВПЕРЕД!!!!!!!!!!
  * */
-u16 formFrame(u16 maxSize, byte_ptr result, u16 command, u16 dataSize, const byte_ptr data, bool_t isWrite);
+u16 formFrame(const u16 maxSize, byte_ptr result, u16 command, const u16 dataSize, const byte_ptr data, bool_t isWrite);
 
 /*
  * Возвращает распарсенный идентификатор и полезное сообщение (ЕЩЕ ЗАШИФРОВАННОЕ)
  * */
-u16 parseFrame(u16 sourceSize, const byte_ptr source, u16 sz, byte_ptr result);
+u16 parseFrame(u16*const parseId, const u16 sourceSize, const byte_ptr source, const u16 sz, byte_ptr result);
 
 
 #endif /* FRAME_H_ */

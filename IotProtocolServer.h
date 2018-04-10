@@ -14,6 +14,7 @@
 #include "TaskMngr.h"
 
 void ServerIotWork(BaseSize_t arg_n, BaseParam_t arg_p);
+void SetClientHandlers(TaskMng writeHandler, TaskMng readHandler);
 
 
 #endif /* IOTPROTOCOLSERVER_H_ */
