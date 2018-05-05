@@ -11,6 +11,10 @@
 #include "TaskMngr.h"
 #include "List.h"
 
+#ifndef PROTOCOL_BUFFER_SIZE
+#define PROTOCOL_BUFFER_SIZE 32 // Размер буферов приема и передачи
+#endif
+
 typedef struct {
 	u16 Id;
 	u08 Key[16];

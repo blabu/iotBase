@@ -11,6 +11,7 @@
 #include "crypt.h"
 #include "List.h"
 #include "logging.h"
+#include "MyString.h"
 
 #define KEY_SIZE 16
 
@@ -53,7 +54,7 @@ static void generateKey(byte_ptr key) {
 		u32 temp = RandomSimple();
 		*((u32*)(key+i)) = temp;
 	}
-	memCpy(key,"1234567890123456",KEY_SIZE); // Удалить после отладки
+	memCpy(key,"1234567890123456",KEY_SIZE); //TODO Удалить после отладки
 }
 
 static void freeClient(BaseSize_t sessionId, Client_t* c) {
@@ -67,18 +68,6 @@ static void freeClientData(BaseSize_t sessionId, ClientData_t* d) {
 	freeMem((byte_ptr)d);
 }
 
-void print(BaseSize_t a, BaseParam_t data) {
-	static count = 0;
-	count++;
-	if(data == NULL) return;
-	Device_t* d = (Device_t*)data;
-	char key[17];
-	memCpy(key,d->Key,KEY_SIZE);
-	key[KEY_SIZE] = 0;
-	printf("Try print in foreach %d) %d = 0x%x, key: %s\n", count, d->Id, d->Id, key);
-}
-
-
 static void ClientWork(BaseSize_t count, BaseParam_t client);
 
 static void NewDeviceCreate(BaseSize_t typeId, BaseParam_t client) {
@@ -87,7 +76,7 @@ static void NewDeviceCreate(BaseSize_t typeId, BaseParam_t client) {
 	generateKey(cl->dev->Key);
 	cl->dev->Id = generateNewId(typeId);
 	if(putToEndList(DeviceList,(void*)cl->dev, sizeof(Device_t)) == NULL) { // Записываем новое устройство в список всех устройств
-		ForEachListNodes(DeviceList,print,FALSE,11);
+		//ForEachListNodes(DeviceList,print,FALSE,11);
 		ResetFemtOS();
 	}
 	memCpy(buff, &(cl->dev->Id), sizeof(cl->dev->Id));
@@ -282,19 +271,15 @@ static void ClientWork(BaseSize_t arg_n, BaseParam_t client) {
 			SetTask(NewDeviceCreate,id,(BaseParam_t)cl);
 			return;
 		}
-		printf("Undefined id in list %d\n", id);
 	}
 	execCallBack((void*)((u32*)ClientWork+cl->sessionId));
 	return;
 }
 
 static void InitializeServer() {
-	printf("Try init\n");
 	DeviceList = createNewList(NULL);
 	changeCallBackLabel(InitializeServer,(void*)getAllParameters);
 	getAllParameters(DeviceList);
-	ForEachListNodes(DeviceList,print,FALSE,11);
-	printf("Pointer %p\n",DeviceList);
 }
 
 void SetClientHandlers(TaskMng writeHandler, TaskMng readHandler) {
@@ -310,11 +295,6 @@ void ServerIotWork(BaseSize_t arg_n, BaseParam_t arg_p) {
 	}
 	u16 sessionId = getNextReadyDevice();
 	if(sessionId) {
-		//------------------------------------------------------------------------------------
-				defragmentation();
-				u16 memmory = getFreeMemmorySize();
-				printf("Free MEMMORY %d\n",memmory);
-		//------------------------------------------------------------------------------------
 		Client_t* c = (Client_t*)allocMem(sizeof(Client_t));
 		if(c != NULL) { // Удалось создать клиента
 			c->sessionId = sessionId;
