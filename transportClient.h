@@ -24,5 +24,8 @@ void saveParameters(u16 id, byte_ptr key, u08 size);
 //Функция получения параметров из памяти. Должна расположить данные по переданным указателям
 void getParameters(u16* id, byte_ptr key, u08 size);
 
+void enableTranseiver(BaseSize_t arg_n, BaseParam_t arg_p);
+
+void disableTranseiver(BaseSize_t arg_n, BaseParam_t arg_p);
 
 #endif /* TRANSPORTCLIENT_H_ */

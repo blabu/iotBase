@@ -16,6 +16,7 @@
 #endif
 
 typedef struct {
+	bool_t isSecure;
 	u16 Id;
 	u08 Key[16];
 } Device_t;

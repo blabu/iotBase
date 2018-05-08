@@ -40,8 +40,9 @@ void SetId(u16 id){
 
 void Initialize() {
 	getParameters(&DeviceId, CryptKey, KEY_SIZE);
+	currentStatus = STATUS_OK;
 	//isSecure = TRUE;
-	execCallBack(Initialize);
+	changeCallBackLabel(Initialize, getParameters);
 }
 
 void EnableSecurity(bool_t on_off){
@@ -52,7 +53,11 @@ ProtocolStatus_t GetLastStatus() {
 	return currentStatus;
 }
 
-static bool_t isCorrect(u16 id);
+static bool_t isCorrect(u16 id) {
+	if(id > 0xFF) return TRUE;
+	return FALSE;
+}
+
 
 // Отправка сообщения обновления ключа шифрования
 void WriteClient(u16 size, byte_ptr message) {
@@ -87,7 +92,9 @@ void WriteClient(u16 size, byte_ptr message) {
 			break;
 		}
 		count++;
-		break;
+		SetTask(enableTranseiver,0,0);
+		registerCallBack((TaskMng)WriteClient,size,message,enableTranseiver);
+		return;
 	case 1: // Шифруем и отправляем
 		sz = getAllocateMemmorySize(cypherMsg);
 		byte_ptr tempMessage = message;
@@ -145,6 +152,10 @@ void WriteClient(u16 size, byte_ptr message) {
 		SetTask((TaskMng)sendTo,sz, BufTransmit);
 		return;
 	case 5:
+		count++;
+		SetTask(disableTranseiver,0,0);
+		registerCallBack((TaskMng)WriteClient,size,message,disableTranseiver);
+		return;
 	default:
 		count = 0;
 		freeMem(cypherMsg); cypherMsg = NULL;
@@ -157,12 +168,13 @@ void WriteClient(u16 size, byte_ptr message) {
 // Чтение данных с сервера
 // Отправляет запрос на сервер Максимальный размер читаемых данных. В ответ получим данные
 void ReadClient(u16 size, byte_ptr result) {
+	const u08 ATTEMPT = 5;
+	static u08 countAttempt = ATTEMPT;
 	static u08 count = 0;
 	u08 temp[KEY_SIZE], cypherMsg[KEY_SIZE];
 	u16 tempId;
 	byte_ptr temp_ptr;
 	u08 sz;
-	writeLogU32(count);
 	if(currentStatus && currentStatus != STATUS_OK) count = 0xFF;
 	switch(count){
 	case 0:
@@ -172,13 +184,18 @@ void ReadClient(u16 size, byte_ptr result) {
 			currentStatus = STATUS_NO_RECEIVE;
 			break;
 		}
+		count++;
+		SetTask(enableTranseiver,0,0);
+		registerCallBack((TaskMng)ReadClient,size, result, enableTranseiver);
+		return;
+	case 1:
+		writeLogStr("Form frame\r\n");
 		toString(2,size,(string_t)temp); // Вставляем размер считываемых данных
 		sz = strSize((string_t)temp);
 		memSet(temp+sz,KEY_SIZE-sz,0); // Дополняем нулями отсавшееся пространство
 		if(isSecure) AesEcbEncrypt(temp,CryptKey,cypherMsg); // Эта информация точно будет меньше 16-ти байт (одного блока)
 		else memCpy(cypherMsg,temp,sz); // Если без шифрования
 		sz = formFrame(PROTOCOL_BUFFER_SIZE, BufTransmit, DeviceId, KEY_SIZE, cypherMsg, FALSE);
-		writeLogStr(BufTransmit);
 		if(sz) { // Если формирование фрейма прошло удачно
 			count++;
 			registerCallBack((TaskMng)ReadClient,size,result,sendTo);
@@ -188,13 +205,13 @@ void ReadClient(u16 size, byte_ptr result) {
 		currentStatus = STATUS_NO_RECEIVE;
 		count = 0xFF;
 		break;
-	case 1:  // Собственно само чтение
+	case 2:  // Собственно само чтение
 		count++;
 		registerCallBack((TaskMng)ReadClient,size,result,receiveFrom);
 		memSet(BufReceive,PROTOCOL_BUFFER_SIZE,0); // Очищаем буфер
-		receiveFrom(PROTOCOL_BUFFER_SIZE,BufReceive);
+		SetTask((TaskMng)receiveFrom,PROTOCOL_BUFFER_SIZE,BufReceive);
 		return;
-	case 2: // Разшифровуем данные
+	case 3: // Разшифровуем данные
 		sz = size;
 		while((sz & 0x0F) & 0x0F) sz++; // Дополняем размер до кратного 16-ти байт (размер блока)
 		temp_ptr = allocMem(sz);
@@ -203,8 +220,17 @@ void ReadClient(u16 size, byte_ptr result) {
 			currentStatus = MEMMORY_ALOC_ERR;
 			break;
 		}
-		parseFrame(&tempId, PROTOCOL_BUFFER_SIZE, BufReceive, sz, temp_ptr);
-		printf("DeviceId is %d, received Id is %d received message is %s and size is %d\n ", DeviceId, tempId, BufReceive, sz);
+		if(!parseFrame(&tempId, PROTOCOL_BUFFER_SIZE, BufReceive, sz, temp_ptr)) {
+			if(countAttempt) {
+				countAttempt--;
+				count = 1;
+				break;
+			}else {
+				writeLogStr("ERROR: Not receive answer\r\n");
+				count = 5;
+				break;
+			}
+		}
 		if(tempId != DeviceId) {
 			freeMem(temp_ptr);
 			count = 0xFF;
@@ -216,31 +242,27 @@ void ReadClient(u16 size, byte_ptr result) {
 			else memCpy(BufReceive+i,temp_ptr+i,KEY_SIZE);
 		}
 		memCpy(result,BufReceive,size);
-		printf("result %d, %s", size, result);
 		freeMem(temp_ptr);
 		count++;
 		break;
-	case 3:
+	case 4:
 		sz = formFrame(PROTOCOL_BUFFER_SIZE, BufTransmit, DeviceId, strSize(OK), (byte_ptr)OK, TRUE);
 		count++;
 		registerCallBack((TaskMng)ReadClient,size,result,sendTo);
 		sendTo(sz,BufTransmit);
 		currentStatus = STATUS_OK;
 		return;
-	case 4:
+	case 5:
+		count++;
+		SetTask(disableTranseiver,0,0);
+		registerCallBack((TaskMng)ReadClient,size,result,disableTranseiver);
+		return;
 	default:
 		count = 0;
+		countAttempt = ATTEMPT;
 		execCallBack(ReadClient);
 		return;
 	}
 	SetTask((TaskMng)ReadClient,size,result);
 }
-
-static bool_t isCorrect(u16 id) {
-	if(id > 0xFF) return TRUE;
-	return FALSE;
-}
-
-
-
 

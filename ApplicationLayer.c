@@ -10,7 +10,7 @@
 #include "ApplicationLayer.h"
 #include "transportClient.h"
 #include "MyString.h"
-
+#include "logging.h"
 /* .
  * .
  * .
@@ -23,13 +23,13 @@ void Register(BaseSize_t type, BaseParam_t buffer){
 	static u08 count = 0;
 	byte_ptr buff = (byte_ptr)buffer;
 	u16 id = 0;
-	printf("Register func %d\n",count);
 	switch(count) {
 	case 0: // Запрос на регистрацию
 		if(type == 0) {
 			execCallBack(Register);
 			return;
 		}
+		writeLogStr("Try register\r\n");
 		if(buff != NULL) freeMem(buff);
 		buff = allocMem(2+KEY_SIZE+1); // Идентификатор (два байта) + Ключ + запасной байт
 		if(buff == NULL) {
@@ -43,10 +43,11 @@ void Register(BaseSize_t type, BaseParam_t buffer){
 		SetTask(ReadClient,getAllocateMemmorySize(buff), (BaseParam_t)buff);
 		return;
 	case 1: // Анализ ответа
+		writeLogStr("Answer analize\r\n");
 		id = *((u16*)buff); // Первые два байта это идентификатор
-		printf("Registered ID = %x\n", id);
 		if((id>>8) != type) {
 			count = 0xFF;
+			writeLogStr("ERROR: Register\r\n");
 			SetTask(Register,type,(BaseParam_t)buff);
 			return;
 		}
@@ -55,6 +56,8 @@ void Register(BaseSize_t type, BaseParam_t buffer){
 		saveParameters(id, buff+2, KEY_SIZE);
 		return;
 	case 2:
+		writeLogStr("Register fine\r\n");
+		//no break
 	default:
 		count = 0;
 		freeMem(buff);
