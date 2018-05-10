@@ -10,16 +10,11 @@
 
 #include "TaskMngr.h"
 #include "List.h"
+#include "initTransmitLL.h"
 
 #ifndef PROTOCOL_BUFFER_SIZE
 #define PROTOCOL_BUFFER_SIZE 32 // Размер буферов приема и передачи
 #endif
-
-typedef struct {
-	bool_t isSecure;
-	u16 Id;
-	u08 Key[16];
-} Device_t;
 
 typedef PAIR(u16, byte_ptr) ClientData_t;
 

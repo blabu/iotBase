@@ -27,9 +27,7 @@ typedef struct {
 static channelBuff_t receiveBuf;
 
 static void socetReceivePacet(BaseSize_t pipeNumber, BaseParam_t buff) {
-	if(receiveBuf.pipeNumber == pipeNumber) {
-		receiveBuf.buff = buff;
-	}
+	receiveBuf.buff = buff;
 }
 
 void initTransportLayer(u08 channel, byte_ptr addrHeader) {
@@ -83,7 +81,7 @@ void sendTo(u16 size, byte_ptr data) {
 		break;
 	case 3:
 		count++;
-		writeLogStr(data);
+		writeLogStr((string_t)data);
 		registerCallBack((TaskMng)sendTo,size,(BaseParam_t)data,TransmitPacket);
 		SetTask(TransmitPacket,receiveBuf.pipe.dataLength,data); // Необходимо заполнить весь буфер (можно мусором)
 		return;
@@ -122,16 +120,20 @@ void receiveFrom(u16 size, byte_ptr result) {
 	return;
 }
 
+#include "MyString.h"
 // Функция сохрания параметры в память
 void saveParameters(u16 id, byte_ptr key, u08 size) {
-	writeLogU32(id);
-	writeLogByteArray(size, key);
+	static char tempStr[21];
+	strClear(tempStr);
+	toStringUnsign(2,id,tempStr);
+	strCat(tempStr, (string_t)key);
+	writeLogStr(tempStr);
 	execCallBack(saveParameters);
 }
 
 //Функция получения параметров из памяти. Должна расположить данные по переданным указателям
-void getParameters(u16* id, byte_ptr key, u08 size) {
-	*id = 0x10;
-	memSet(key,size,0x31);
+void getParameters(u08 size, Device_t* dev) {
+	dev->Id = 0x10;
+	memSet(dev->Key,size,0x31);
 	execCallBack(getParameters);
 }

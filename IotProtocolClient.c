@@ -38,13 +38,6 @@ void SetId(u16 id){
 	if(id) DeviceId = id;
 }
 
-void Initialize() {
-	getParameters(&DeviceId, CryptKey, KEY_SIZE);
-	currentStatus = STATUS_OK;
-	//isSecure = TRUE;
-	changeCallBackLabel(Initialize, getParameters);
-}
-
 void EnableSecurity(bool_t on_off){
 	isSecure = on_off;
 }
@@ -189,7 +182,6 @@ void ReadClient(u16 size, byte_ptr result) {
 		registerCallBack((TaskMng)ReadClient,size, result, enableTranseiver);
 		return;
 	case 1:
-		writeLogStr("Form frame\r\n");
 		toString(2,size,(string_t)temp); // Вставляем размер считываемых данных
 		sz = strSize((string_t)temp);
 		memSet(temp+sz,KEY_SIZE-sz,0); // Дополняем нулями отсавшееся пространство

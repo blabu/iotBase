@@ -56,8 +56,6 @@ void Register(BaseSize_t type, BaseParam_t buffer){
 		saveParameters(id, buff+2, KEY_SIZE);
 		return;
 	case 2:
-		writeLogStr("Register fine\r\n");
-		//no break
 	default:
 		count = 0;
 		freeMem(buff);

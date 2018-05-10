@@ -54,9 +54,10 @@ void initTransportLayer(u08 channel, byte_ptr addrHeader) {
 		receiveBuf[i].pipe.dataLength = 32;
 		receiveBuf[i].pipeNumber = i;
 	}
-	registerCallBack((TaskMng)RXModeRetry,receiveBuf[0].pipeNumber,(BaseParam_t)(&receiveBuf[0].pipe),configureNRF24);
 	SetTask(configureNRF24,nRF24_DR_250kbps,NULL);
-	changeCallBackLabel(initTransportLayer,RXModeRetry);
+	registerCallBack((TaskMng)RXModeRetry,receiveBuf[0].pipeNumber,(BaseParam_t)(&receiveBuf[0].pipe),configureNRF24);
+//	registerCallBack((TaskMng)RXModeRetry,receiveBuf[1].pipeNumber,(BaseParam_t)(&receiveBuf[0].pipe),(u32*)RXModeRetry+receiveBuf[0].pipeNumber);
+	changeCallBackLabel(initTransportLayer,(u32*)RXModeRetry+receiveBuf[0].pipeNumber);
 	connectTaskToSignal(socetReceivePacet,(void*)signalNrf24ReceiveMessages);
 }
 
@@ -71,42 +72,40 @@ static void offSession(BaseSize_t id, BaseParam_t arg_p) {
 	execCallBack(((void*)(u32*)offSession+id));
 }
 
+static void EnableTransmitter(u16 id,  ClientData_t *data) {
+	nRF24_SetPowerMode(nRF24_PWR_DOWN);
+	u08 i = id-1;
+	updateTimer(offSession,id,NULL,TICK_PER_SECOND<<2);
+	changeCallBackLabel((void*)((u32*)EnableTransmitter+id),TXModeRetry);
+	SetTask((TaskMng)TXModeRetry,0,(BaseParam_t)&receiveBuf[i].pipe);
+	return;
+}
+
+static void DisableTransmitter(u16 id,  ClientData_t *data) {
+	u08 i = id-1;
+	nRF24_SetPowerMode(nRF24_PWR_DOWN);
+	changeCallBackLabel((void*)((u32*)DisableTransmitter+id),(u32*)RXModeRetry+receiveBuf[i].pipeNumber);
+	SetTask((TaskMng)RXModeRetry,receiveBuf[i].pipeNumber,(BaseParam_t)&receiveBuf[i].pipe);
+	return;
+}
+
+static void Send(u16 id,  ClientData_t *data){
+	u08 i = id-1;
+	changeCallBackLabel((void*)((u32*)Send+id),TransmitPacket);
+	SetTimerTask(TransmitPacket,receiveBuf[i].pipe.dataLength,data->second,2); // Необходимо заполнить весь буфер (можно мусором)
+	return;
+}
+
 // Функция непосредственной отправки данных
 // Устройство всегда работает на прием информации (за исключение необходимости передать что-то)
 void sendToClient(u16 id,  ClientData_t *data){
-	static u08 count = 0;
-	switch(count) {
-		case 0:
-			updateTimer(offSession,id,NULL,TICK_PER_SECOND<<2);
-			nRF24_SetPowerMode(nRF24_PWR_DOWN);
-			id--; // id всегда больше нуля (для приведения его к порядковому номеру в масиве см. getNextReadyDevice)
-			if(id >= MAX_CHANNEL) {count = 0xff; break;}
-			count++;
-			registerCallBack((TaskMng)sendToClient,id,(BaseParam_t)data,TXModeRetry);
-			SetTask((TaskMng)TXModeRetry,0,(BaseParam_t)&receiveBuf[id].pipe);
-			return;
-		case 1: case 2: case 3: // Задержка для перехода в режим передатчика
-			count++;
-			break;
-		case 4:
-			count++;
-			registerCallBack((TaskMng)sendToClient,id,(BaseParam_t)data,TransmitPacket);
-			SetTask(TransmitPacket,receiveBuf[id].pipe.dataLength,data->second); // Необходимо заполнить весь буфер (можно мусором)
-			return;
-		case 5: // Возвращаемся в режим приема
-			nRF24_SetPowerMode(nRF24_PWR_DOWN);
-			count++;
-			registerCallBack((TaskMng)sendToClient,id,(BaseParam_t)data,RXModeRetry);
-			SetTask((TaskMng)RXModeRetry,receiveBuf[id].pipeNumber,(BaseParam_t)&receiveBuf[id].pipe);
-			return;
-		case 6:
-		default:
-			count = 0;
-			id++; // Для вызова колбэка вернем id (см. case 0)
-			execCallBack((void*)((u32*)sendToClient + id));
-			return;
-	}
-	SetTask((TaskMng)sendToClient,id,(BaseParam_t)data);
+	if(id > MAX_CHANNEL) { execCallBack((void*)((u32*)sendToClient + id)); return;}
+	u08 i = id-1;
+	if(!receiveBuf[i].isBusy) {execCallBack((void*)((u32*)sendToClient + id)); return;}
+	SetTask((TaskMng)EnableTransmitter,id,(BaseParam_t)data);
+	registerCallBack((TaskMng)Send,id,(BaseParam_t)data,(void*)((u32*)EnableTransmitter+id));
+	registerCallBack((TaskMng)DisableTransmitter,id,(BaseParam_t)data,(void*)((u32*)Send+id));
+	changeCallBackLabel((void*)((u32*)sendToClient + id),(void*)((u32*)DisableTransmitter+id));
 }
 
 // Функция получения данных полученные данные будут записаны по указателю result, но не более размера size
@@ -117,11 +116,14 @@ void receiveFromClient(u16 id, ClientData_t *result){
 		execCallBack((void*)((u32*)receiveFromClient + id));
 		return;
 	}
-	updateTimer(offSession,id,NULL,TICK_PER_SECOND<<3);
 	u08 i = id-1;
 	if(receiveBuf[i].buff != NULL) { // Если есть данные
+		updateTimer(offSession,id,NULL,TICK_PER_SECOND<<2);
 		memCpy(result->second,receiveBuf[i].buff,result->first); // Читаем ровно столько сколько попросили
 		receiveBuf[i].buff = NULL; // Обнуляем буфер для получения следующих данных
+		execCallBack((void*)((u32*)receiveFromClient + id));
+		return;
+	} else if (!receiveBuf[i].isBusy) {
 		execCallBack((void*)((u32*)receiveFromClient + id));
 		return;
 	}
@@ -143,7 +145,6 @@ u16 getNextReadyDevice(){
 	return 0;
 }
 
-#include "logging.h"
 void printDevice(BaseSize_t arg_n, BaseParam_t device) {
 	Device_t* dev = (Device_t*)device;
 	writeLogU32(dev->Id);
@@ -152,6 +153,7 @@ void printDevice(BaseSize_t arg_n, BaseParam_t device) {
 // Функция сохрания параметры в память
 void saveAllParameters(ListNode_t* DeviceList) {
 	ForEachListNodes(DeviceList,printDevice,TRUE,0);
+	writeLogStr("SAVE all parameters");
 	execCallBack(saveAllParameters);
 }
 
