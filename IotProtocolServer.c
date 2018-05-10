@@ -19,6 +19,7 @@ static bool_t isSecure = FALSE;
 static ListNode_t* DeviceList = NULL; // Хранит указатель на голову списка устройств
 static TaskMng WriteHandler = NULL;
 static TaskMng ReadHandler = NULL;
+static bool_t isAllowRegistration = FALSE;
 
 typedef struct {
 	u16 sessionId;
@@ -26,6 +27,10 @@ typedef struct {
 	Device_t* dev;
 	byte_ptr newKey;
 } Client_t;
+
+void allowRegistration(bool_t isEnable) {
+	isAllowRegistration = isEnable;
+}
 
 static Device_t* findDeviceById(u16 devId) {
 	Device_t* result = NULL;
@@ -114,7 +119,7 @@ static void NewDeviceCreate(BaseSize_t count, BaseParam_t client) {
 	case 3: //
 		count++;
 		if(findStr(OK,(string_t)cl->buff.second) > 0) { // подтверждение отправляется без шифрования
-			writeLogStr("OK for reg func finded\r\n");
+			writeLogStr("OK finded\r\n");
 			memCpy(cl->dev->Key,cl->newKey,KEY_SIZE);
 		}else {
 			writeLogStr("ERROR: OK not find\r\n");
@@ -302,7 +307,8 @@ static void ClientWork(BaseSize_t arg_n, BaseParam_t client) {
 			}
 		}
 		else  // Если устройство мы не нашли в списке устройств
-			if(id < 0xFF) {// Значит устройства с таким Id не существует проверяем не ригистрация ли это
+			if(id < 0xFF && isAllowRegistration) {// Значит устройства с таким Id не существует
+				//проверяем не ригистрация ли это И разрешена ли она.
 			cl->dev = (Device_t*)allocMem(sizeof(Device_t));
 			if(cl->dev == NULL) {
 				execCallBack((void*)((u32*)ClientWork+cl->sessionId));

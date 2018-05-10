@@ -19,7 +19,7 @@
  * и в конце обязательно возвращаемся на прием
  * */
 
-#define MAX_CHANNEL 2
+#define MAX_CHANNEL 3
 
 typedef struct {
 		bool_t isBusy;
@@ -35,6 +35,7 @@ static void socetReceivePacet(BaseSize_t pipeNumber, BaseParam_t buff) {
 	if(pipeNumber > MAX_CHANNEL) writeLogStr("ERROR: overflow pipe number\r\n");
 	if(!receiveBuf[pipeNumber].isBusy) receiveBuf[pipeNumber].isReady = TRUE;
 	receiveBuf[pipeNumber].buff = buff;
+	writeLogStr("+");
 }
 
 // Устройство в режиме сервера всегда работает как приемник
@@ -45,19 +46,23 @@ void initTransportLayer(u08 channel, byte_ptr addrHeader) {
 	for(u08 i = 0; i<MAX_CHANNEL; i++) {
 		receiveBuf[i].isReady = FALSE;
 		receiveBuf[i].isBusy  = FALSE;
-		receiveBuf[i].pipe.address[0] = i+1;  // Server address 1_5
+		receiveBuf[i].buff = NULL;
+		receiveBuf[i].pipeNumber = i;
+		receiveBuf[i].pipe.address[0] = i<<5 + 1;  // Server address 1_5
 		receiveBuf[i].pipe.address[1] = addrHeader[3]; // Server address 1_1
 		receiveBuf[i].pipe.address[2] = addrHeader[2]; // Server address 1_2
 		receiveBuf[i].pipe.address[3] = addrHeader[1]; // Server address 1_3
 		receiveBuf[i].pipe.address[4] = addrHeader[0]; // Server address 1_4
 		receiveBuf[i].pipe.channel = channel;
 		receiveBuf[i].pipe.dataLength = 32;
-		receiveBuf[i].pipeNumber = i;
+		if(i) {
+			registerCallBack((TaskMng)RXMode,receiveBuf[i].pipeNumber,(BaseParam_t)(&receiveBuf[i].pipe),(u32*)RXMode+receiveBuf[i-1].pipeNumber);
+		}
 	}
 	SetTask(configureNRF24,nRF24_DR_250kbps,NULL);
-	registerCallBack((TaskMng)RXModeRetry,receiveBuf[0].pipeNumber,(BaseParam_t)(&receiveBuf[0].pipe),configureNRF24);
-//	registerCallBack((TaskMng)RXModeRetry,receiveBuf[1].pipeNumber,(BaseParam_t)(&receiveBuf[0].pipe),(u32*)RXModeRetry+receiveBuf[0].pipeNumber);
-	changeCallBackLabel(initTransportLayer,(u32*)RXModeRetry+receiveBuf[0].pipeNumber);
+	registerCallBack((TaskMng)RXMode,receiveBuf[0].pipeNumber,(BaseParam_t)(&receiveBuf[0].pipe),configureNRF24);
+	registerCallBack((TaskMng)FinishInitMultiReceiver,0, 0, (u32*)RXMode+receiveBuf[MAX_CHANNEL-1].pipeNumber);
+	changeCallBackLabel(initTransportLayer,FinishInitMultiReceiver);
 	connectTaskToSignal(socetReceivePacet,(void*)signalNrf24ReceiveMessages);
 }
 
@@ -76,16 +81,15 @@ static void EnableTransmitter(u16 id,  ClientData_t *data) {
 	nRF24_SetPowerMode(nRF24_PWR_DOWN);
 	u08 i = id-1;
 	updateTimer(offSession,id,NULL,TICK_PER_SECOND<<2);
-	changeCallBackLabel((void*)((u32*)EnableTransmitter+id),TXModeRetry);
-	SetTask((TaskMng)TXModeRetry,0,(BaseParam_t)&receiveBuf[i].pipe);
+	changeCallBackLabel((void*)((u32*)EnableTransmitter+id),TXMode);
+	SetTask((TaskMng)TXMode,0,(BaseParam_t)&receiveBuf[i].pipe);
 	return;
 }
 
 static void DisableTransmitter(u16 id,  ClientData_t *data) {
-	u08 i = id-1;
 	nRF24_SetPowerMode(nRF24_PWR_DOWN);
-	changeCallBackLabel((void*)((u32*)DisableTransmitter+id),(u32*)RXModeRetry+receiveBuf[i].pipeNumber);
-	SetTask((TaskMng)RXModeRetry,receiveBuf[i].pipeNumber,(BaseParam_t)&receiveBuf[i].pipe);
+	changeCallBackLabel((u32*)DisableTransmitter+id,FinishInitMultiReceiver);
+	FinishInitMultiReceiver();
 	return;
 }
 
@@ -139,6 +143,7 @@ u16 getNextReadyDevice(){
 			receiveBuf[i].isReady = FALSE;
 			receiveBuf[i].isBusy = TRUE;
 			SetTimerTask(offSession,i+1,NULL,TICK_PER_SECOND<<2);
+			writeLogStr("Rdy\r\n");
 			return i+1;
 		}
 	}
@@ -153,7 +158,7 @@ void printDevice(BaseSize_t arg_n, BaseParam_t device) {
 // Функция сохрания параметры в память
 void saveAllParameters(ListNode_t* DeviceList) {
 	ForEachListNodes(DeviceList,printDevice,TRUE,0);
-	writeLogStr("SAVE all parameters");
+	writeLogStr("SAVE: all parameters");
 	execCallBack(saveAllParameters);
 }
 
