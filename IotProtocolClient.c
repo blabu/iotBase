@@ -12,9 +12,9 @@
 
 #include "logging.h"
 /*
- * Result message has a form $V1xxxxYYYYPAAA...AAAcc
+ * Result message has a form $01xxxxYYYYPAAA...AAAcc
  * where '$' - start symbol
- * V1 - version of protocol (0 - F posible variant)
+ * 01 - version of protocol (02 - Secure version)
  * xxxx - MESSAGE_SIZE message size ascii format (max 'FFFF')
  * YYYY - unique device identificator
  *  'P' - delim symbol between identifier and arguments
@@ -25,25 +25,39 @@
  *  Заголовок пакета должен быть в формате ASCII строк для обеспечения совместивмости с предыдущими версиями
  * */
 
-static bool_t isSecure = FALSE;
-static u16 DeviceId = 0; // Id устройства
-static u08 CryptKey[KEY_SIZE]; // Ключ шифрования
+static Device_t device;
 ProtocolStatus_t currentStatus;
 
 static u08 BufTransmit[PROTOCOL_BUFFER_SIZE];
 #define BufReceive BufTransmit /*The same buffer*/
 //u08 BufReceive[PROTOCOL_BUFFER_SIZE];
 
-void SetId(u16 id){
-	if(id) DeviceId = id;
+void InitializeClient() {
+	changeCallBackLabel(InitializeClient,getParameters);
+	getParameters(KEY_SIZE, &device);
 }
 
-void EnableSecurity(bool_t on_off){
-	isSecure = on_off;
+u16 getDeviceId(){
+	return device.Id;
+}
+
+void setId(u16 id) {
+	device.Id = id;
+}
+
+void setSecurity(bool_t enable) {
+	device.isSecure = enable;
+}
+
+void setKey(u16 sz, byte_ptr key) {
+	if(sz > KEY_SIZE) return;
+	memCpy(device.Key, key, sz);
 }
 
 ProtocolStatus_t GetLastStatus() {
-	return currentStatus;
+	ProtocolStatus_t temp = currentStatus;
+	currentStatus = STATUS_OK;
+	return temp;
 }
 
 static bool_t isCorrect(u16 id) {
@@ -58,17 +72,16 @@ void WriteClient(u16 size, byte_ptr message) {
 	static byte_ptr cypherMsg = NULL;
 	u16 sz;
 	u16 tempId;
-	if(!DeviceId) {
+	if(!device.Id) {
 		currentStatus = DEVICEID_IS_NULL;
 		count = 0;
 		execCallBack(WriteClient);
 		return;
 	}
 	if(currentStatus && currentStatus != STATUS_OK) count = 0xFF;
-	writeLogU32(count);
 	switch(count) {
 	case 0:
-		if(!isCorrect(DeviceId)) {
+		if(!isCorrect(device.Id)) {
 			currentStatus = DEVICEID_IS_NULL;
 			execCallBack(WriteClient);
 			return;
@@ -91,18 +104,18 @@ void WriteClient(u16 size, byte_ptr message) {
 	case 1: // Шифруем и отправляем
 		sz = getAllocateMemmorySize(cypherMsg);
 		byte_ptr tempMessage = message;
-		if(sz > size) {
+		if(sz > size) { // Дополняем сообщение нулями при необходимости
 			tempMessage = allocMem(sz); if(tempMessage == NULL) {currentStatus = STATUS_NO_SEND; break;}
 			memCpy(tempMessage,message,size);
 			memSet(tempMessage+size,sz-size,0); // Дополняем до кратного 16-ти исходное сообщение нулями
 		}
-		for(u08 i = 0; i<sz; i+=KEY_SIZE) {
-			if(isSecure) AesEcbEncrypt(tempMessage+i,CryptKey,cypherMsg+i);
+		for(u08 i = 0; i<sz; i+=KEY_SIZE) { // Шифруем
+			if(device.isSecure) AesEcbEncrypt(tempMessage+i,device.Key,cypherMsg+i);
 			else memCpy(cypherMsg+i,tempMessage+i,KEY_SIZE);
 		}
 		freeMem(tempMessage);
-		sz = formFrame(PROTOCOL_BUFFER_SIZE, BufTransmit, DeviceId, sz, cypherMsg, TRUE);
-		if(!sz) {
+		sz = formFrame(PROTOCOL_BUFFER_SIZE, BufTransmit, device.Id, sz, cypherMsg, TRUE, device.isSecure); // Формируем
+		if(!sz) { // Сформировать не получилось
 			count=0xFF;
 			currentStatus = STATUS_NO_SEND;
 			break;
@@ -119,8 +132,8 @@ void WriteClient(u16 size, byte_ptr message) {
 		return;
 	case 3: // Парсим ответ В ответ должен был прийти новый ключ шифрования
 		sz = getAllocateMemmorySize(cypherMsg);
-		sz = parseFrame(&tempId, PROTOCOL_BUFFER_SIZE, BufReceive, sz ,cypherMsg);
-		if(tempId != DeviceId) {
+		sz = parseFrame(&tempId, PROTOCOL_BUFFER_SIZE, BufReceive, sz ,cypherMsg, &device.isSecure);
+		if(tempId != device.Id) {
 				currentStatus = STATUS_NO_SEND; // То мы получили не свой пакет
 				count = 0xFF;
 				break;
@@ -130,16 +143,16 @@ void WriteClient(u16 size, byte_ptr message) {
 			count = 0xFF;
 			break;
 		}
-		if(isSecure) AesEcbDecrypt(cypherMsg,CryptKey,BufReceive); // Расшифровуем полученное сообщение
+		if(device.isSecure) AesEcbDecrypt(cypherMsg,device.Key,BufReceive); // Расшифровуем полученное сообщение
 		else memCpy(BufReceive,cypherMsg,KEY_SIZE); // Без шифрования
 		count++;
-		memCpy(CryptKey,BufReceive,KEY_SIZE);
+		memCpy(device.Key,BufReceive,KEY_SIZE);
 		registerCallBack((TaskMng)WriteClient,size,(BaseParam_t)message, saveParameters);
-		saveParameters(DeviceId,CryptKey,KEY_SIZE);
+		saveParameters(device.Id,device.Key,KEY_SIZE,device.isSecure);
 		currentStatus = STATUS_OK;
 		return;
 	case 4: // Отправка подтверждения о получении ключа шифрования (не шифрованное)
-		sz = formFrame(PROTOCOL_BUFFER_SIZE, BufTransmit, DeviceId, strSize(OK), (byte_ptr)OK, TRUE);
+		sz = formFrame(PROTOCOL_BUFFER_SIZE, BufTransmit, device.Id, strSize(OK), (byte_ptr)OK, TRUE, FALSE);
 		count++;
 		registerCallBack((TaskMng)WriteClient,size,(BaseParam_t)message, sendTo);
 		SetTask((TaskMng)sendTo,sz, BufTransmit);
@@ -185,9 +198,9 @@ void ReadClient(u16 size, byte_ptr result) {
 		toString(2,size,(string_t)temp); // Вставляем размер считываемых данных
 		sz = strSize((string_t)temp);
 		memSet(temp+sz,KEY_SIZE-sz,0); // Дополняем нулями отсавшееся пространство
-		if(isSecure) AesEcbEncrypt(temp,CryptKey,cypherMsg); // Эта информация точно будет меньше 16-ти байт (одного блока)
+		if(device.isSecure) AesEcbEncrypt(temp,device.Key,cypherMsg); // Эта информация точно будет меньше 16-ти байт (одного блока)
 		else memCpy(cypherMsg,temp,sz); // Если без шифрования
-		sz = formFrame(PROTOCOL_BUFFER_SIZE, BufTransmit, DeviceId, KEY_SIZE, cypherMsg, FALSE);
+		sz = formFrame(PROTOCOL_BUFFER_SIZE, BufTransmit, device.Id, KEY_SIZE, cypherMsg, FALSE, device.isSecure);
 		if(sz) { // Если формирование фрейма прошло удачно
 			count++;
 			registerCallBack((TaskMng)ReadClient,size,result,sendTo);
@@ -212,7 +225,7 @@ void ReadClient(u16 size, byte_ptr result) {
 			currentStatus = MEMMORY_ALOC_ERR;
 			break;
 		}
-		if(!parseFrame(&tempId, PROTOCOL_BUFFER_SIZE, BufReceive, sz, temp_ptr)) {
+		if(!parseFrame(&tempId, PROTOCOL_BUFFER_SIZE, BufReceive, sz, temp_ptr, &device.isSecure)) {
 			if(countAttempt) {
 				countAttempt--;
 				count = 1;
@@ -223,14 +236,14 @@ void ReadClient(u16 size, byte_ptr result) {
 				break;
 			}
 		}
-		if(tempId != DeviceId) {
+		if(tempId != device.Id) {
 			freeMem(temp_ptr);
 			count = 0xFF;
 			currentStatus = STATUS_NO_RECEIVE;
 			break;
 		}
 		for(u16 i = 0; i<sz; i+=KEY_SIZE) {
-			if(isSecure) AesEcbDecrypt(temp_ptr+i,CryptKey,BufReceive+i);
+			if(device.isSecure) AesEcbDecrypt(temp_ptr+i,device.Key,BufReceive+i);
 			else memCpy(BufReceive+i,temp_ptr+i,KEY_SIZE);
 		}
 		memCpy(result,BufReceive,size);
@@ -238,7 +251,7 @@ void ReadClient(u16 size, byte_ptr result) {
 		count++;
 		break;
 	case 4:
-		sz = formFrame(PROTOCOL_BUFFER_SIZE, BufTransmit, DeviceId, strSize(OK), (byte_ptr)OK, TRUE);
+		sz = formFrame(PROTOCOL_BUFFER_SIZE, BufTransmit, device.Id, strSize(OK), (byte_ptr)OK, TRUE, FALSE); // Подтверждение без шифрования
 		count++;
 		registerCallBack((TaskMng)ReadClient,size,result,sendTo);
 		sendTo(sz,BufTransmit);

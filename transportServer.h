@@ -10,7 +10,7 @@
 
 #include "TaskMngr.h"
 #include "List.h"
-#include "initTransmitLL.h"
+#include "initLowLevelModule.h"
 
 #ifndef PROTOCOL_BUFFER_SIZE
 #define PROTOCOL_BUFFER_SIZE 32 // Размер буферов приема и передачи
@@ -27,11 +27,12 @@ void receiveFromClient(u16 id, ClientData_t *result);
 // Вернет идентификатор следующего готового узла для работы. (0 означает, что нет готовых узлов)
 u16 getNextReadyDevice();
 
-// Функция сохрания параметры в память
-void saveAllParameters(ListNode_t* DeviceList);
+// Функция обновления устройства
+void updateDevice(Device_t* dev);
 
 //Функция получения параметров из памяти. Должна расположить данные по переданным указателям
 void getAllParameters(ListNode_t* DeviceList);
 
+void addNewDevice(Device_t* dev);
 
 #endif /* TRANSPORTSERVER_H_ */

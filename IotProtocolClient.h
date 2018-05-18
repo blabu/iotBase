@@ -23,17 +23,19 @@
 #ifndef IOTPROTOCOLCLIENT_H_
 #define IOTPROTOCOLCLIENT_H_
 
+#include <initLowLevelModule.h>
 #include "TaskMngr.h"
 
 #define PROTOCOL_BUFFER_SIZE 32 // Размер буферов приема и передачи
-#define KEY_SIZE 16
 
 /*
  * Инициализация системы если Id не нулевой
  * */
-void Initialize();
-
-void SetId(u16 id);
+void InitializeClient();
+u16 getDeviceId();
+void setId(u16 id);
+void setSecurity(bool_t enable);
+void setKey(u16 sz, byte_ptr key);
 
 /* Отправка данных зашифрованным каналом
  * message - указатель на данные которые необходимо отправить
@@ -47,8 +49,6 @@ void WriteClient(u16 size, byte_ptr message);
  * При этом ключ шифрования не меняется
  * */
 void ReadClient(u16 size, byte_ptr result);
-
-void EnableSecurity(bool_t on_off);
 
 typedef enum {
 	STATUS_OK = 0,

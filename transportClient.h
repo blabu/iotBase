@@ -8,6 +8,7 @@
 #ifndef TRANSPORTCLIENT_H_
 #define TRANSPORTCLIENT_H_
 
+#include <initLowLevelModule.h>
 #include "TaskMngr.h"
 
 // Для работы протокола необходимо реализовать эти функции. Каждая из функций ОБЯЗАТЕЛЬНО должна вызывать execCallBack себя же.
@@ -19,10 +20,10 @@ void sendTo(u16 size, byte_ptr data);
 void receiveFrom(u16 size, byte_ptr result);
 
 // Функция сохрания параметры в память
-void saveParameters(u16 id, byte_ptr key, u08 size);
+void saveParameters(u16 id, byte_ptr key, u08 size, bool_t isSecure);
 
 //Функция получения параметров из памяти. Должна расположить данные по переданным указателям
-void getParameters(u16* id, byte_ptr key, u08 size);
+void getParameters(u08 size, Device_t* dev);
 
 void enableTranseiver(BaseSize_t arg_n, BaseParam_t arg_p);
 

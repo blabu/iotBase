@@ -6,10 +6,12 @@
  */
 
 #include "transportClient.h"
-#include "initTransmitLL.h"
 #include "logging.h"
 #include "nrf24.h"
 #include "nrf24AppLayer.h"
+#include "config.h"
+
+#ifndef SERVER
 
 /*
  * Модуль всегда находится в режиме приема
@@ -35,7 +37,7 @@ void initTransportLayer(u08 channel, byte_ptr addrHeader) {
 	nRF24_SetPowerMode(nRF24_PWR_DOWN);
 	nRF24_CE_L();
 	receiveBuf.isReady = FALSE;
-	receiveBuf.pipe.address[0] = 1;  // Server address 1_5
+	receiveBuf.pipe.address[0] = 3;  // Server address 1_5
 	receiveBuf.pipe.address[1] = addrHeader[3]; // Server address 1_1
 	receiveBuf.pipe.address[2] = addrHeader[2]; // Server address 1_2
 	receiveBuf.pipe.address[3] = addrHeader[1]; // Server address 1_3
@@ -55,11 +57,12 @@ void enableTranseiver(BaseSize_t arg_n, BaseParam_t arg_p) {
 	}
 	receiveBuf.isReady = TRUE;
 	SetTask((TaskMng)RXModeRetry,receiveBuf.pipeNumber,(BaseParam_t)(&receiveBuf.pipe));
-	changeCallBackLabel(enableTranseiver,RXModeRetry);
+	registerCallBack((TaskMng)FinishInitMultiReceiver,0,0,(u32*)RXModeRetry+receiveBuf.pipeNumber);
+	changeCallBackLabel(enableTranseiver,FinishInitMultiReceiver);
 }
 
 void disableTranseiver(BaseSize_t arg_n, BaseParam_t arg_p) {
-	writeLogStr("Disable tr\n");
+	writeLogStr("DISABLE TR\r\n");
 	receiveBuf.isReady = FALSE;
 	nRF24_SetPowerMode(nRF24_PWR_DOWN);
 	nRF24_CE_L();
@@ -73,6 +76,7 @@ void sendTo(u16 size, byte_ptr data) {
 	case 0:
 		nRF24_SetPowerMode(nRF24_PWR_DOWN);
 		count++;
+		writeLogStr("SEND:\r\n");
 		registerCallBack((TaskMng)sendTo,size,(BaseParam_t)data,TXModeRetry);
 		SetTask((TaskMng)TXModeRetry,0,(BaseParam_t)&receiveBuf.pipe);
 		return;
@@ -81,15 +85,15 @@ void sendTo(u16 size, byte_ptr data) {
 		break;
 	case 3:
 		count++;
-		writeLogStr((string_t)data);
 		registerCallBack((TaskMng)sendTo,size,(BaseParam_t)data,TransmitPacket);
 		SetTask(TransmitPacket,receiveBuf.pipe.dataLength,data); // Необходимо заполнить весь буфер (можно мусором)
 		return;
 	case 4: // Возвращаемся в режим приема
 		count++;
 		nRF24_SetPowerMode(nRF24_PWR_DOWN);
-		registerCallBack((TaskMng)sendTo,size,(BaseParam_t)data,RXModeRetry);
 		SetTask((TaskMng)RXModeRetry,receiveBuf.pipeNumber,(BaseParam_t)&receiveBuf.pipe);
+		registerCallBack((TaskMng)FinishInitMultiReceiver,0,0,(u32*)RXModeRetry+receiveBuf.pipeNumber);
+		registerCallBack((TaskMng)sendTo,size,(BaseParam_t)data,FinishInitMultiReceiver);
 		return;
 	case 5:
 	default:
@@ -105,6 +109,7 @@ void receiveFrom(u16 size, byte_ptr result) {
 	static const u08 ATTEMPT = 100;
 	static u08 tryReceiveAttempt = ATTEMPT;
 	if(receiveBuf.buff != NULL) { // Если есть данные
+		writeLogStr("REC:\r\n");
 		tryReceiveAttempt = ATTEMPT;
 		memCpy(result,receiveBuf.buff,size); // Читаем ровно столько сколько попросили
 		receiveBuf.buff = NULL; // Обнуляем буфер для получения следующих данных
@@ -120,20 +125,41 @@ void receiveFrom(u16 size, byte_ptr result) {
 	return;
 }
 
+static u16 __id = 0; //FIXME Наше хранилище (пока в ОЗУ)
+static u08 __key[16] = {0}; //FIXME Наше хранилище (пока в ОЗУ)
+static bool_t _IsSecure = FALSE;
+
 #include "MyString.h"
 // Функция сохрания параметры в память
-void saveParameters(u16 id, byte_ptr key, u08 size) {
-	static char tempStr[21];
-	strClear(tempStr);
-	toStringUnsign(2,id,tempStr);
-	strCat(tempStr, (string_t)key);
-	writeLogStr(tempStr);
+void saveParameters(u16 id, byte_ptr key, u08 size,  bool_t isSecure) {
+	__id = id;
+	_IsSecure = isSecure;
+	memCpy(__key,key,size);
+
+	// Для логирования
+	static char str[48];
+	char tempStr[6];
+	strClear(str);
+	if(isSecure) strCat(str, "SAVE=1;");
+	else strCat(str, "SAVE=0;");
+	toString(2,id,str+6);
+	strCat(str, ";");
+	for(u08 i = 0; i<16; i++) {
+		toString(1,key[i],tempStr);
+		strCat(str,tempStr);
+	}
+	strCat(str,";\r\n");
+	writeLogStr(str);
+
 	execCallBack(saveParameters);
 }
 
 //Функция получения параметров из памяти. Должна расположить данные по переданным указателям
 void getParameters(u08 size, Device_t* dev) {
-	dev->Id = 0x10;
-	memSet(dev->Key,size,0x31);
+	dev->Id = __id;
+	memCpy(dev->Key, __key, size);
+	dev->isSecure = _IsSecure;
 	execCallBack(getParameters);
 }
+
+#endif

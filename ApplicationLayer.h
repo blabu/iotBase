@@ -10,6 +10,4 @@
 
 void Register(BaseSize_t type, BaseParam_t arg_p);
 
-
-
 #endif /* APPLICATIONLAYER_H_ */
