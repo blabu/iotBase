@@ -15,36 +15,35 @@
 #include "MyString.h"
 #include  "TaskMngr.h"
 
-extern const string_t header;
-extern const string_t WriteToServerSymb;
-extern const string_t ReadFromSeverSymb;
 extern const string_t OK;
+
+typedef struct {
+	u08 version;		 // версия протокола указывает по зашифрованному или нет каналу передаются данные (0 - НЕ зашифрованный 1 - зашифрованный)
+	bool_t isWrite; 	 // флаг указывает на запись или на чтение формруется пакет
+	u16 id;				 // идентификатор устройства
+	u16 dataSize;		 // размер полезной информации
+	byte_ptr data;		 // указатель на полезную информацию для передачи (УЖЕ ЗАШИФРОВАННУЮ)
+}message_t;
 
 /*
  * Сформирует сообщение для отправки данных во внутренний буфер
  * КОНТРОЛЬНАЯ СУММА МЛАДШИМ БАЙТОМ ВПЕРЕД!!!!!!!!!!
  * maxSize - максимальный размер выходного буфера
  * result - указатель на место куда будет записан результат
- * command - В рамках текущего протокола идентификатор устройства
- * dataSize - размер полезной информации
- * data - указатель на полезную информацию для передачи (УЖЕ ЗАШИФРОВАННУЮ)
- * isWrite - флаг указывает на запись или на чтение формруется пакет
- * isSecure - флаг указывает по зашифрованному или нет каналу передаются данные
  * Возвращает размер сообщения (ноль если сформировать сообшение не удалось)
  * */
-u16 formFrame(const u16 maxSize, byte_ptr result, u16 command,
-		      const u16 dataSize, const byte_ptr data, bool_t isWrite, bool_t isSecure);
+u16 formFrame(const u16 maxSize, byte_ptr result, const message_t*const msg);
+
 
 /*
  * Возвращает длину полезного сообщения (ноль если распарсить не удалось)
- * parseId - заполняет найденным в сообщении идентификатором
  * sourceSize - размер исходного сообщения
  * source - указатель на исходное сообщение
- * sz - размер, больше которого не будет ничего записываться при формировании распарсенного сообщения
- * result - sz байт (или меньше) полученного сообщения (ЕЩЕ ЗАШИФРОВАННОЕ)
- * IsSecure - указатель куда будет записано канал передачи сообщения зашифрован или нет
+ * result->id - заполняет найденным в сообщении идентификатором
+ * result->dataSize - размер, больше которого не будет ничего записываться при формировании распарсенного сообщения
+ * result->data - result->dataSize байт (или меньше) полученного сообщения (ЕЩЕ ЗАШИФРОВАННОЕ)
+ * result->version - указатель куда будет записано канал передачи сообщения зашифрован или нет
  * */
-u16 parseFrame(u16*const parseId, const u16 sourceSize, const byte_ptr source,
-		       const u16 sz, byte_ptr result, bool_t* isSecure);
+u16 parseFrame(const u16 sourceSize, const byte_ptr source, message_t* result);
 
 #endif /* FRAME_H_ */

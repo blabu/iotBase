@@ -8,6 +8,6 @@
 #ifndef CONFIG_H_
 #define CONFIG_H_
 
-#define SERVER
+//#define SERVER
 
 #endif /* CONFIG_H_ */

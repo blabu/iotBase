@@ -1,0 +1,3 @@
+// Binary protocol base by protobuf
+syntax = "proto2";
+

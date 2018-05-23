@@ -86,7 +86,7 @@ static void offSession(BaseSize_t id, BaseParam_t arg_p) {
 static void EnableTransmitter(u16 id,  ClientData_t *data) {
 	nRF24_SetPowerMode(nRF24_PWR_DOWN);
 	u08 i = id-1;
-	updateTimer(offSession,id,NULL,TICK_PER_SECOND<<2); // Таймоут для очистки передатчика
+	updateTimer(offSession,id,NULL,TICK_PER_SECOND); // Таймоут для очистки передатчика
 	changeCallBackLabel((void*)((u32*)EnableTransmitter+id),TXModeRetry);
 	SetTask((TaskMng)TXModeRetry,0,(BaseParam_t)&receiveBuf[i].pipe);
 	return;
@@ -130,7 +130,7 @@ void receiveFromClient(u16 id, ClientData_t *result) {
 	}
 	u08 i = id-1;
 	if(receiveBuf[i].buff != NULL) { // Если есть данные
-		updateTimer(offSession,id,NULL,TICK_PER_SECOND<<2);
+		updateTimer(offSession,id,NULL,TICK_PER_SECOND);
 		memCpy(result->second,receiveBuf[i].buff,result->first); // Читаем ровно столько сколько попросили
 		receiveBuf[i].buff = NULL; // Обнуляем буфер для получения следующих данных
 		execCallBack((void*)((u32*)receiveFromClient + id));
@@ -151,7 +151,7 @@ u16 getNextReadyDevice() {
 		if(receiveBuf[i].isReady) {
 			receiveBuf[i].isReady = FALSE;
 			receiveBuf[i].isBusy = TRUE;
-			SetTimerTask(offSession,i+1,NULL,TICK_PER_SECOND<<2);
+			SetTimerTask(offSession,i+1,NULL,TICK_PER_SECOND);
 			strClear(buf); strCat(buf,"RDY:"); toStringDec(i,buf+strSize("RDY:")); writeLogStr(buf);
 			return i+1;
 		}
@@ -161,34 +161,18 @@ u16 getNextReadyDevice() {
 
 void updateDevice(Device_t* dev) {
 	static char str[47];  //NEW=S;XXXX;YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY;\r\n
-	char tempStr[6];
 	strClear(str);
-	if(dev->isSecure) strCat(str, "UP=1;");
-	else strCat(str, "UP=0;");
-	toString(2,dev->Id,str+6);
-	strCat(str, ";");
-	for(u08 i = 0; i<16; i++) {
-		toString(1,dev->Key[i],tempStr);
-		strCat(str,tempStr);
-	}
-	strCat(str,";\r\n");
+	strCat(str,"UP=");
+	serializeDevice(str+strSize(str),dev);
 	CDC_Transmit_FS((byte_ptr)str,strSize(str));
 	execCallBack((u32*)updateDevice + dev->Id);
 }
 
 void addNewDevice(Device_t* dev) {
 	static char str[47];  //NEW=S;XXXX;YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY;\r\n
-	char tempStr[6];
 	strClear(str);
-	if(dev->isSecure) strCat(str, "NEW=1;");
-	else strCat(str, "NEW=0;");
-	toString(2,dev->Id,str+6);
-	strCat(str, ";");
-	for(u08 i = 0; i<16; i++) {
-		toString(1,dev->Key[i],tempStr);
-		strCat(str,tempStr);
-	}
-	strCat(str,";\r\n");
+	strCat(str,"NEW=");
+	serializeDevice(str+strSize(str),dev);
 	CDC_Transmit_FS((byte_ptr)str,strSize(str));
 	execCallBack((u32*)addNewDevice + dev->Id);
 }
@@ -210,7 +194,7 @@ void serializeDevice(string_t devStr, Device_t* d) {
 	strCat(devStr,";\r\n");
 }
 
-// Вернет -1
+// Вернет -1 если не получилось
 s08 deserializeDevice(string_t devStr, Device_t* d) {
 	if(devStr == NULL || d == NULL) return -1;
 	u08 c = strSplit(';',devStr);
@@ -221,8 +205,8 @@ s08 deserializeDevice(string_t devStr, Device_t* d) {
 	devStr += strSize(devStr);
 	char tempStr[4];
 	for(u08 i = 0; i<KEY_SIZE; i++) {
-		tempStr[0] = devStr++;
-		tempStr[1] = devStr++;
+		tempStr[0] = *devStr++;
+		tempStr[1] = *devStr++;
 		tempStr[3] = 0;
 		d->Key[i] = toInt16(tempStr);
 	}

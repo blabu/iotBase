@@ -17,7 +17,6 @@
 
 #ifdef SERVER
 
-//static bool_t isSecure = FALSE;
 static ListNode_t* DeviceList = NULL; // Хранит указатель на голову списка устройств
 static TaskMng WriteHandler = NULL;
 static TaskMng ReadHandler = NULL;
@@ -28,6 +27,7 @@ typedef struct {
 	ClientData_t buff;
 	Device_t* dev;
 	byte_ptr newKey;
+	bool_t isSecureSession;
 } Client_t;
 
 void allowRegistration(bool_t isEnable) {
@@ -83,6 +83,7 @@ static void ClientWork(BaseSize_t count, BaseParam_t client);
 static void NewDeviceCreate(BaseSize_t count, BaseParam_t client) {
 	u08 buff[PROTOCOL_BUFFER_SIZE];
 	Client_t* cl = (Client_t*)client;
+	message_t msg;
 	switch(count) {
 	case 0:
 		generateKey(cl->dev->Key);
@@ -98,7 +99,12 @@ static void NewDeviceCreate(BaseSize_t count, BaseParam_t client) {
 		memCpy(buff, &(cl->dev->Id), sizeof(cl->dev->Id)); // Копируем в ответ клиенту идентификатор
 		memCpy(buff+sizeof(cl->dev->Id),cl->dev->Key, KEY_SIZE); //Копируем в ответ клиенту ключ шифрования
 		 // Отправляем запрос без шифрования если это вновь зарегистрированное устройство
-		u16 sz = formFrame(cl->buff.first, cl->buff.second, getTypeById(cl->dev->Id), sizeof(cl->dev->Id)+KEY_SIZE, buff, TRUE, FALSE);
+		msg.data = buff;
+		msg.dataSize = sizeof(cl->dev->Id)+KEY_SIZE;
+		msg.isWrite = 1;
+		msg.version = 0;
+		msg.id = getTypeById(cl->dev->Id);
+		u16 sz = formFrame(cl->buff.first, cl->buff.second,&msg);
 		if(sz) {
 			cl->buff.first = sz;
 			count++;
@@ -118,10 +124,15 @@ static void NewDeviceCreate(BaseSize_t count, BaseParam_t client) {
 		return;
 	case 3: //
 		count++;
-		if(findStr(OK,(string_t)cl->buff.second) > 0) { // подтверждение отправляется без шифрования
+		msg.data = buff;
+		msg.dataSize = PROTOCOL_BUFFER_SIZE;
+		sz = parseFrame(getAllocateMemmorySize(cl->buff.second),cl->buff.second,&msg);
+		if(sz > 0 && findStr(OK,(string_t)msg.data) >= 0) { // подтверждение отправляется без шифрования
 			count++;
 			registerCallBack(NewDeviceCreate,count,(BaseParam_t)cl, (u32*)addNewDevice+cl->dev->Id);
+			cl->dev->isSecure = TRUE;
 			addNewDevice(cl->dev); // Сохраняем новое устройство
+			writeLogStr("REG OK\r\n");
 			return;
 		}else {
 			writeLogStr("ERROR: OK not find\r\n");
@@ -138,6 +149,7 @@ static void NewDeviceCreate(BaseSize_t count, BaseParam_t client) {
 static void DeviceWriteWork(BaseSize_t count, BaseParam_t client) { // Работа с найденым устройством из списка
 	Client_t* cl = (Client_t*)client;
 	u08 sz = 0;
+	message_t msg;
 	u08 tempBuff[KEY_SIZE];
 	ClientData_t* d;
 	switch(count) {
@@ -171,10 +183,16 @@ static void DeviceWriteWork(BaseSize_t count, BaseParam_t client) { // Рабо�
 			break;
 		}
 		generateKey(cl->newKey);
-		// Эти данные равный длине ключа шифрования
+		// Эти данные равны длине ключа шифрования
 		if(cl->dev->isSecure) AesEcbEncrypt(cl->newKey,cl->dev->Key,tempBuff); // Шифруем старым ключом
 		else memCpy(tempBuff,cl->newKey,KEY_SIZE);
-		sz = formFrame(cl->buff.first,cl->buff.second,cl->dev->Id,KEY_SIZE,tempBuff,TRUE, cl->dev->isSecure);
+		msg.data = tempBuff;
+		msg.isWrite = 1;
+		msg.dataSize = KEY_SIZE;
+		if(cl->dev->isSecure) msg.version = 1;
+		else msg.version = 0;
+		msg.id = cl->dev->Id;
+		sz = formFrame(cl->buff.first,cl->buff.second,&msg);
 		if(!sz) {
 			count = 0xFF;
 			break;
@@ -190,12 +208,18 @@ static void DeviceWriteWork(BaseSize_t count, BaseParam_t client) { // Рабо�
 		return;
 	case 3: //
 		count++;
-		if(findStr(OK,(string_t)cl->buff.second) > 0) { // подтверждение отправляется без шифрования
+		msg.data = tempBuff;
+		msg.dataSize = KEY_SIZE;
+		sz = parseFrame(getAllocateMemmorySize(cl->buff.second),cl->buff.second,&msg);
+		if(sz>0 && findStr(OK,(string_t)msg.data) >= 0) { // подтверждение отправляется без шифрования
+			cl->dev->isSecure = cl->isSecureSession;
 			memCpy(cl->dev->Key,cl->newKey,KEY_SIZE);
 			registerCallBack(DeviceWriteWork,count, (BaseParam_t)cl, (u32*)updateDevice + cl->dev->Id);
 			updateDevice(cl->dev);
+			writeLogStr("TX OK find\r\n");
 			return;
 		}else {
+			cl->dev->isSecure = FALSE;
 			writeLogStr("ERROR: OK not find\r\n");
 		}
 		//no break;
@@ -210,6 +234,7 @@ static void DeviceReadWork(BaseSize_t count, BaseParam_t client) { // Работ
 	Client_t* cl = (Client_t*)client;
 	u16 sz = 0;
 	u08 tempArray[PROTOCOL_BUFFER_SIZE];
+	message_t msg;
 	switch(count) {
 	case 0: // Анализ размера запрашиваемого сообщения
 		if(ReadHandler != NULL) {
@@ -250,7 +275,13 @@ static void DeviceReadWork(BaseSize_t count, BaseParam_t client) { // Работ
 			if(cl->buff.second == NULL) {count=0xff; break;}
 			cl->buff.first = PROTOCOL_BUFFER_SIZE;
 		}
-		sz = formFrame(cl->buff.first,cl->buff.second,cl->dev->Id,sz, tempArray,TRUE, cl->dev->isSecure); // ОТПРАВКА ДАННЫХ
+		msg.data = tempArray;
+		msg.isWrite = TRUE;
+		msg.dataSize = sz;
+		if(cl->dev->isSecure) msg.version = 1;
+		else msg.version = 0;
+		msg.id = cl->dev->Id;
+		sz = formFrame(cl->buff.first,cl->buff.second,&msg); // ОТПРАВКА ДАННЫХ
 		if(!sz) {
 			count = 0xFF;
 			break;
@@ -266,9 +297,14 @@ static void DeviceReadWork(BaseSize_t count, BaseParam_t client) { // Работ
 		return;
 	case 3: //
 		count++;
-		if(findStr(OK,(string_t)cl->buff.second) > 0) { // подтверждение отправляется без шифрования
-			writeLogStr("OK find!!!\r\n");
+		msg.data = tempArray;
+		msg.dataSize = PROTOCOL_BUFFER_SIZE;
+		sz = parseFrame(cl->buff.first,cl->buff.second,&msg);
+		if(sz>0 && findStr(OK,(string_t)msg.data) >= 0) { // подтверждение отправляется без шифрования
+			cl->dev->isSecure = cl->isSecureSession;
+			writeLogStr("RX OK find\r\n");
 		}else {
+			cl->dev->isSecure = FALSE;
 			writeLogStr("ERROR: OK not find\r\n");
 		}
 		//no break;
@@ -282,28 +318,25 @@ static void DeviceReadWork(BaseSize_t count, BaseParam_t client) { // Работ
 
 // Расшифровуем полученные данные и вызываем соответсвующие функции чтения или записи
 static void ClientWork(BaseSize_t arg_n, BaseParam_t client) {
-	u16 id;
-	u16 effectiveSize;
-	s16 isWriteToServer = 0;
-	bool_t isSecure = FALSE;
 	Client_t* cl = (Client_t*)client;
 	u08 buff[PROTOCOL_BUFFER_SIZE]; // Для разшифровки полученного сообщения
-	if(findStr(WriteToServerSymb,(string_t)cl->buff.second) > 0) isWriteToServer = 1; // Значит пакет на запись данных на сервер
-	else if(findStr(ReadFromSeverSymb,(string_t)cl->buff.second) > 0) isWriteToServer = -1; // Значит пакет на чтение данных с сервера
-	if(!isWriteToServer) { // Значит не известный пакет
-		execCallBack((void*)((u32*)ClientWork+cl->sessionId));
-		return;
-	}
-	effectiveSize = parseFrame(&id, cl->buff.first,cl->buff.second, PROTOCOL_BUFFER_SIZE, buff, &isSecure); // Парсим сообщение (проверка контрольной суммы)
-	if(id != 0 && effectiveSize > 0) {	// Если парсинг сообщения прошел успешно
-		cl->dev = findDeviceById(id);	// Пытаемся найти идентификатор
+	message_t msg;
+	msg.data = buff;
+	msg.dataSize = PROTOCOL_BUFFER_SIZE;
+	u16 effectiveSize = parseFrame(cl->buff.first,cl->buff.second, &msg); // Парсим сообщение (проверка контрольной суммы)
+	if(msg.id != 0 && effectiveSize > 0) {	// Если парсинг сообщения прошел успешно
+		cl->dev = findDeviceById(msg.id);	// Пытаемся найти идентификатор
 		if(cl->dev != NULL) { // Нашли такое устройство
-			cl->dev->isSecure = isSecure;
+			switch(msg.version) {
+					case 0: cl->isSecureSession = FALSE; break;  // Сохраняем протокол по которому работает клиент
+					case 1: cl->isSecureSession = TRUE; break;
+					default: cl->isSecureSession = FALSE;  // Undefine version type
+			}
 			for(u08 i = 0; i<cl->buff.first; i+=KEY_SIZE) {
-				if(cl->dev->isSecure) AesEcbDecrypt(buff+i,cl->dev->Key,cl->buff.second+i); // Расшифровуем полученное сообщение
+				if(cl->isSecureSession) AesEcbDecrypt(buff+i,cl->dev->Key,cl->buff.second+i); // Расшифровуем полученное сообщение
 				else memCpy(cl->buff.second+i, buff+i, KEY_SIZE); // Без шифрования
 			}
-			if(isWriteToServer > 0) { // Если сообщение на запись данных на сервер
+			if(msg.isWrite) { // Если сообщение на запись данных на сервер
 				cl->buff.first = effectiveSize; // Сохраняем размер полезного сообщения
 				changeCallBackLabel((void*)((u32*)ClientWork + cl->sessionId), (void*)((u32*)DeviceWriteWork + cl->sessionId));
 				SetTask(DeviceWriteWork,0,(BaseParam_t)cl); // Запуская воркера на запись
@@ -315,7 +348,7 @@ static void ClientWork(BaseSize_t arg_n, BaseParam_t client) {
 			}
 		}
 		else  // Если устройство мы не нашли в списке устройств
-			if(id < 0xFF && isAllowRegistration) {// Значит устройства с таким Id не существует
+			if(msg.id < 0xFF && isAllowRegistration) {// Значит устройства с таким Id не существует
 				//проверяем не ригистрация ли это И разрешена ли она.
 			cl->dev = (Device_t*)allocMem(sizeof(Device_t));
 			if(cl->dev == NULL) {
@@ -323,7 +356,7 @@ static void ClientWork(BaseSize_t arg_n, BaseParam_t client) {
 				return;
 			}
 			writeLogStr((string_t)cl->buff.second);
-			cl->dev->Id = id;
+			cl->dev->Id = msg.id;
 			changeCallBackLabel((void*)((u32*)ClientWork + cl->sessionId), (void*)((u32*)NewDeviceCreate + cl->sessionId));
 			SetTask(NewDeviceCreate,0,(BaseParam_t)cl);
 			return;
@@ -370,7 +403,7 @@ void ServerIotWork(BaseSize_t arg_n, BaseParam_t arg_p) {
 			writeLogStr("ERROR: memmory allocate for client session");
 		}
 	}
-	SetTimerTask(ServerIotWork,sessionId,arg_p,TIME_DELAY_IF_BUSY);
+	SetTimerTask(ServerIotWork,sessionId,arg_p,2);
 }
 
 #endif

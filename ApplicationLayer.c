@@ -41,7 +41,7 @@ void Register(BaseSize_t type, BaseParam_t buffer){
 			execCallBack(Register);
 			return;
 		}
-		memSet(buff,getAllocateMemmorySize(buff),0);
+		memCpy(buff,"GET_ID?",strSize("GET_ID?")); // Текст запроса
 		setId(type);
 		setSecurity(FALSE);
 		count++;

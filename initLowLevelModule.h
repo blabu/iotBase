@@ -21,6 +21,7 @@ typedef struct {
 void initTransportLayer(u08 channel, byte_ptr addrHeader);
 
 void serializeDevice(string_t devStr, Device_t* d);
-void deserializeDevice(string_t devStr, Device_t* d);
+// Вернет -1 если не получилось
+s08 deserializeDevice(string_t devStr, Device_t* d);
 
 #endif /* INITLOWLEVELMODULE_H_ */

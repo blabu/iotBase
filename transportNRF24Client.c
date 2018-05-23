@@ -62,7 +62,7 @@ void enableTranseiver(BaseSize_t arg_n, BaseParam_t arg_p) {
 }
 
 void disableTranseiver(BaseSize_t arg_n, BaseParam_t arg_p) {
-	writeLogStr("DISABLE TR\r\n");
+	writeLogStr("TR OFF\r\n");
 	receiveBuf.isReady = FALSE;
 	nRF24_SetPowerMode(nRF24_PWR_DOWN);
 	nRF24_CE_L();
@@ -106,7 +106,7 @@ void sendTo(u16 size, byte_ptr data) {
 
 // Функция получения данных полученные данные будут записаны по указателю result, но не более размера size
 void receiveFrom(u16 size, byte_ptr result) {
-	static const u08 ATTEMPT = 100;
+	static const u08 ATTEMPT = 30;
 	static u08 tryReceiveAttempt = ATTEMPT;
 	if(receiveBuf.buff != NULL) { // Если есть данные
 		writeLogStr("REC:\r\n");
@@ -117,12 +117,13 @@ void receiveFrom(u16 size, byte_ptr result) {
 		return;
 	}
 	writeLogStr(".");
-	if((tryReceiveAttempt--) > 0) SetTimerTask((TaskMng)receiveFrom,size,(BaseParam_t)result,TIME_DELAY_IF_BUSY);
+	if((tryReceiveAttempt--) > 0) {
+		SetTimerTask((TaskMng)receiveFrom,size,(BaseParam_t)result,TIME_DELAY_IF_BUSY);
+	}
 	else {
 		tryReceiveAttempt = ATTEMPT;
 		execCallBack(receiveFrom);
 	}
-	return;
 }
 
 static u16 __id = 0; //FIXME Наше хранилище (пока в ОЗУ)
@@ -152,6 +153,42 @@ void saveParameters(u16 id, byte_ptr key, u08 size,  bool_t isSecure) {
 	writeLogStr(str);
 
 	execCallBack(saveParameters);
+}
+
+void serializeDevice(string_t devStr, Device_t* d) {
+	if(devStr == NULL || d == NULL) return;
+	char tempStr[6];
+	strClear(devStr);
+	toString(1,d->isSecure,tempStr);
+	strCat(devStr,tempStr);
+	strCat(devStr,";");
+	toString(2,d->Id,tempStr);
+	strCat(devStr,tempStr);
+	strCat(devStr,";");
+	for(u08 i = 0; i<KEY_SIZE; i++) {
+		toString(1,d->Key[i],tempStr);
+		strCat(devStr,tempStr);
+	}
+	strCat(devStr,";\r\n");
+}
+
+// Вернет -1 если не получилось
+s08 deserializeDevice(string_t devStr, Device_t* d) {
+	if(devStr == NULL || d == NULL) return -1;
+	u08 c = strSplit(';',devStr);
+	if(c<3) return -1;
+	d->isSecure = toInt08(devStr);
+	devStr += strSize(devStr);
+	d->Id = toInt32(devStr);
+	devStr += strSize(devStr);
+	char tempStr[4];
+	for(u08 i = 0; i<KEY_SIZE; i++) {
+		tempStr[0] = *devStr++;
+		tempStr[1] = *devStr++;
+		tempStr[3] = 0;
+		d->Key[i] = toInt16(tempStr);
+	}
+	return 1;
 }
 
 //Функция получения параметров из памяти. Должна расположить данные по переданным указателям

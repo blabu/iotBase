@@ -7,17 +7,18 @@
 #include "crypt.h"
 #include "frame.h"
 
+const string_t OK = "OK;";
+
 /*Специфичные для протокола определения размеров*/
+#define DIRACTION_SIZE 1
+#define VERSION_SIZE 2
 #define MESSAGE_SIZE 4
 #define ID_SIZE  4
 #define CRC_SIZE 2
 
-const string_t header = "$01"; // ДЛИНА ОБЯЗАТЕЛЬНО ДОЛЖНА СОВПАДАТЬ
-const string_t headerSecure = "$02";
-const string_t WriteToServerSymb = ">";
-const string_t ReadFromSeverSymb = "<";
-const string_t OK = "OK;";
-
+static const char startByte = '$';
+static const string_t WriteToServerSymb = ">";
+static const string_t ReadFromSeverSymb = "<";
 
 static u16 crc16(u16 size, byte_ptr data) {
 	return CRC16(size, data);
@@ -33,6 +34,7 @@ static void fillRightStr(u16 size, string_t str, char symb) {
 	}
 }
 
+
 /*
  * Сформирует сообщение для отправки данных во внутренний буфер
  * maxSize - максимальный размер выходного буфера
@@ -44,35 +46,39 @@ static void fillRightStr(u16 size, string_t str, char symb) {
  * isSecure - флаг указывает по зашифрованному или нет каналу передаются данные
  * Возвращает размер сообщения (ноль если сформировать сообшение не удалось)
  * */
-u16 formFrame(const u16 maxSize, byte_ptr result, u16 command, const u16 dataSize, const byte_ptr data, bool_t isWrite, bool_t isSecure) {
-	if(strSize(header)+MESSAGE_SIZE+ID_SIZE+strSize(WriteToServerSymb)+dataSize+CRC_SIZE > maxSize) return 0; // Все сообщение не влезит в буфер
+static u16 formFrameAscii(const u16 maxSize, byte_ptr result, const message_t*const msg) {
+	if( sizeof(startByte)+VERSION_SIZE+MESSAGE_SIZE+ID_SIZE+DIRACTION_SIZE+CRC_SIZE + msg->dataSize > maxSize )
+		return 0; // Все сообщение не влезит в буфер
 
+	result[0] = startByte;
+	result[1] = '\0';
 	char temp[6];
 	//I
-	if(isSecure) memCpy(result,headerSecure,strSize(headerSecure)+1); // Копируем зашифрованный заголовок
-	else memCpy(result,header,strSize(header)+1); // Копируем заголовок
+	toStringUnsign(1,msg->version,temp);
+	fillRightStr(VERSION_SIZE,temp,'0');
+	temp[VERSION_SIZE] = '\0';
+	strCat((string_t)result,temp);
 	//II
-	toStringUnsign(2, ID_SIZE+1+dataSize+CRC_SIZE, temp); // Вычисляем размер сообщения согласно протоколу (не входит заголовок и сам размер)
+	toStringUnsign(2, ID_SIZE+DIRACTION_SIZE + msg->dataSize + CRC_SIZE, temp); // Вычисляем размер сообщения согласно протоколу (не входит заголовок и сам размер)
 	fillRightStr(MESSAGE_SIZE,temp,'0'); // Формируем размер сообщения
-	temp[4] = '\0';
+	temp[MESSAGE_SIZE] = '\0';
 	strCat((string_t)result,temp); // Добавляем размер сообщения
 	//III
-	toStringUnsign(2,command,temp);
+	toStringUnsign(2,msg->id,temp);
 	fillRightStr(ID_SIZE,temp,'0'); // Формируем Id
-	temp[4] = '\0';
+	temp[ID_SIZE] = '\0';
 	strCat((string_t)result,temp); // Добавляем идентификатор
 	//IV
-	if(isWrite) strCat((string_t)result,WriteToServerSymb);
+	if(msg->isWrite) strCat((string_t)result,WriteToServerSymb);
 	else strCat((string_t)result,ReadFromSeverSymb);
 	//V
 	u16 size = strSize((string_t)result); // Вычисляем смещение для полезных данных
-	memCpy(result+size,data,dataSize);
-	size+=dataSize;
+	memCpy(result+size,msg->data,msg->dataSize);
+	size+=msg->dataSize;
 	//VI
 	u16 c = crc16(size, result); // size - это размер абсолютно всего сообщения включая заголовок и длину сообщения без контрольной суммы
 	result[size] = c & 0xFF; // Первый байт младший
 	result[size+1] = c >> 8; // Второй байт старший
-	//printf("Form crc %x\n", c);
 	return size+CRC_SIZE;
 }
 
@@ -85,41 +91,117 @@ u16 formFrame(const u16 maxSize, byte_ptr result, u16 command, const u16 dataSiz
  * result - sz байт (или меньше) полученного сообщения (ЕЩЕ ЗАШИФРОВАННОЕ)
  * IsSecure - указатель куда будет записано канал передачи сообщения зашифрован или нет
  * */
-u16 parseFrame(u16*const parseId, const u16 sourceSize, const byte_ptr source, const u16 sz, byte_ptr result, bool_t* isSecure) {
-	if(parseId == NULL || result == NULL || isSecure == NULL) return 0;
-	s16 poz = findStr(header, (const string_t)source); // Проверяем заголовок НЕ зашифрованный
-	if(poz < 0) {  //Если НЕ нашли пытаемся найти заголовок зашифрованный
-		poz = findStr(headerSecure, (const string_t)source);
-		*isSecure = TRUE;
-	} else *isSecure = FALSE;
-	if(poz >= 0) {
-		u16 effectiveSize = 0;
-		char temp[5];
-		memCpy(temp,source+poz+strSize(header),MESSAGE_SIZE); // Достаем размер сообщения
-		temp[4] = '\0';
-		u16 size = (u16)toInt32(temp);
-		if(size > sourceSize) return 0;  // Размер сообщения слишком большой
-		effectiveSize = size - ID_SIZE - strSize(ReadFromSeverSymb)-CRC_SIZE;
-		memCpy(temp,source+poz+strSize(header)+MESSAGE_SIZE,ID_SIZE); // Достаем идентификатор
-		temp[4] = '\0';
-		*parseId = (u16)toInt32(temp);
-		u16 argShift = poz + strSize(header)+MESSAGE_SIZE+ID_SIZE+strSize(ReadFromSeverSymb); // Смещение от начала буфера для аргументов
-		// включает в себя заголовок, длину сообщения, уникальный идентификатор и символ разделитель
-		u16 crcShift = poz + strSize(header)+MESSAGE_SIZE+size-CRC_SIZE; // Смещение от начала буфера для контрольной суммы
-		// включает в себя загаловок, длину сообщения, само сообщение минус два байта самой контрольной суммы
-		u16 crcReceive = ((u16)(source[crcShift+1])<<8) | source[crcShift]; // Достаем из сообщения контрольную сумму
-		u16 crcCalc = crc16(crcShift,source+poz); // Вычисляем контрольную сумму без учета самой контрольной суммы
-		if(crcReceive == crcCalc) {
-			if(effectiveSize > sz) {
-				memCpy(result,source+argShift,sz);
-			}else {
-				memCpy(result,source+argShift,effectiveSize);
-			}
-			return effectiveSize;
+static u16 parseFrameAscii(const u16 sourceSize, const byte_ptr source, message_t* result) {
+	if(result == NULL || result->data == NULL || result->dataSize == 0) return 0;
+	s16 poz = findSymb(startByte,(const string_t)source);
+	if(poz < 0)	return 0; // Не нашли стартовый символ
+	char temp[5];
+
+	// I Парсим версию протокола
+	temp[0] = source[poz+1];
+	temp[1] = source[poz+2];
+	temp[2] = '\0';
+	result->version = toInt16(temp);
+
+	// II Парсим размер полученного сообщения и вычисляем размер эффективного сообщения
+	u16 effectiveSize = 0;
+	memCpy(temp, source+poz+sizeof(startByte)+VERSION_SIZE, MESSAGE_SIZE); // Достаем размер сообщения
+	temp[MESSAGE_SIZE] = '\0';
+	u16 size = (u16)toInt32(temp);
+	if(size > sourceSize) return 0;  // Еще не получено все сообщение
+	effectiveSize = size - ID_SIZE - DIRACTION_SIZE - CRC_SIZE;
+
+	// III Парсим идентификатор устройства
+	memCpy(temp, source+poz+sizeof(startByte)+VERSION_SIZE+MESSAGE_SIZE, ID_SIZE); // Достаем идентификатор
+	temp[ID_SIZE] = '\0';
+	result->id = (u16)toInt32(temp);
+
+	// IV Определяем направление передачи данных
+	memCpy(temp, source+poz+sizeof(startByte)+VERSION_SIZE+MESSAGE_SIZE+ID_SIZE, DIRACTION_SIZE);
+	temp[DIRACTION_SIZE] = '\0';
+	if(findStr(WriteToServerSymb, temp) >= 0) result->isWrite = TRUE;
+	else result->isWrite = FALSE;
+
+	// V  Выделяем сами данные и контрольную сумму
+	u16 argShift = poz+sizeof(startByte)+VERSION_SIZE+MESSAGE_SIZE+ID_SIZE+DIRACTION_SIZE; // Смещение от начала буфера для аргументов
+	// включает в себя заголовок, длину сообщения, уникальный идентификатор и символ разделитель
+	u16 crcShift = poz+sizeof(startByte)+VERSION_SIZE+MESSAGE_SIZE+size-CRC_SIZE; // Смещение от начала буфера для контрольной суммы
+	// включает в себя загаловок, длину сообщения, само сообщение минус два байта самой контрольной суммы
+	u16 crcReceive = ((u16)(source[crcShift+1])<<8) | source[crcShift]; // Достаем из сообщения контрольную сумму
+	u16 crcCalc = crc16(crcShift,source+poz); // Вычисляем контрольную сумму без учета самой контрольной суммы
+	if(crcReceive == crcCalc) {
+		if(effectiveSize > result->dataSize) {
+			memCpy(result->data,source+argShift,result->dataSize);
+		}else {
+			memCpy(result->data,source+argShift,effectiveSize);
 		}
-		*parseId = 0;
-		return 0;
+		return effectiveSize;
 	}
-	*parseId = 0;
+	result->id = 0;
 	return 0;
+}
+
+
+static u16 parseFrameBinary(const u16 sourceSize, const byte_ptr source, message_t* result) {
+	if(result == NULL || result->data == NULL || result->dataSize == 0) return 0;
+	s16 poz = findSymb(startByte,(const string_t)source);
+	if(poz < 0)	return 0; // Не нашли стартовый символ
+	u16 savePoz = poz;
+	result->version = source[++poz];
+	u16 allMessageSize = source[++poz];
+	allMessageSize |= ((u16)source[++poz]<<8);
+	if(sourceSize < allMessageSize) return 0; // Не получено ВСЕ сообщение
+	u16 effectiveMessageSize = allMessageSize - sizeof(result->id) - DIRACTION_SIZE - CRC_SIZE;
+	result->id = source[++poz];
+	result->id |= ((u16)source[++poz]<<8);
+	if(findSymb(source[++poz],WriteToServerSymb) >= 0) result->isWrite = TRUE;
+	else result->isWrite = FALSE;
+	u16 crcShift = sizeof(startByte)+sizeof(result->version)+sizeof(result->dataSize)+allMessageSize-CRC_SIZE;
+	u16 calcCRC = crc16(crcShift, source+savePoz);
+	u16 reqCRC = source[savePoz+crcShift] | ((u16)source[savePoz+crcShift+1] << 8);
+	if(calcCRC == reqCRC) {
+		if(result->dataSize > effectiveMessageSize) {
+			memCpy(result->data,source+poz+1,effectiveMessageSize);
+			memSet(result->data+effectiveMessageSize,result->dataSize-effectiveMessageSize,0);
+			return effectiveMessageSize;
+		}
+		else {
+			memCpy(result->data,source+poz+1,result->dataSize);
+			return result->dataSize;
+		}
+	}
+	result->id = 0;
+	return 0;
+}
+
+static u16 formFrameBinary(const u16 maxSize, byte_ptr result, const message_t*const msg) {
+	if( sizeof(startByte)+sizeof(msg->version)+sizeof(msg->dataSize)+sizeof(msg->id)+DIRACTION_SIZE+CRC_SIZE + msg->dataSize > maxSize )
+		return 0; // Все сообщение не влезит в буфер
+
+	result[0] = startByte;
+	result[1] = msg->version;
+	u16 sz = sizeof(msg->id)+DIRACTION_SIZE+msg->dataSize+CRC_SIZE;
+	result[2] = (u08)(sz & 0xFF);
+	result[3] = (u08)(sz >> 8);
+	result[4] = (u08)(msg->id & 0xFF);
+	result[5] = (u08)(msg->id >> 8);
+	if(msg->isWrite) result[6] = WriteToServerSymb[0];
+	else result[6] = ReadFromSeverSymb[0];
+	memCpy(result+7,msg->data,msg->dataSize);
+	sz = 7+msg->dataSize;
+	u16 c = crc16(sz,result);
+	result[sz] = (u08)(c & 0xFF);
+	result[sz+1] = (u08)(c >> 8);
+	return sz+2;
+}
+
+
+
+
+u16 formFrame(const u16 maxSize, byte_ptr result, const message_t*const msg) {
+	return formFrameBinary(maxSize,result,msg);
+}
+
+u16 parseFrame(const u16 sourceSize, const byte_ptr source, message_t* result) {
+	return parseFrameBinary(sourceSize, source, result);
 }
