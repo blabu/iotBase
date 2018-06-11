@@ -8,9 +8,8 @@
 #ifndef TRANSPORTCLIENT_H_
 #define TRANSPORTCLIENT_H_
 
-#include <initLowLevelModule.h>
 #include "TaskMngr.h"
-
+#include "baseEntity.h"
 // Для работы протокола необходимо реализовать эти функции. Каждая из функций ОБЯЗАТЕЛЬНО должна вызывать execCallBack себя же.
 
 // Функция непосредственной отправки данных

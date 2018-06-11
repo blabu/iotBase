@@ -8,6 +8,9 @@
 #ifndef CONFIG_H_
 #define CONFIG_H_
 
-#define SERVER
+
+//#define SERVER
+#define RETRY_ENABLE
+
 
 #endif /* CONFIG_H_ */

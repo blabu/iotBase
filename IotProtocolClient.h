@@ -23,8 +23,8 @@
 #ifndef IOTPROTOCOLCLIENT_H_
 #define IOTPROTOCOLCLIENT_H_
 
-#include <initLowLevelModule.h>
 #include "TaskMngr.h"
+#include "baseEntity.h"
 
 #define PROTOCOL_BUFFER_SIZE 32 // Размер буферов приема и передачи
 
@@ -36,6 +36,9 @@ u16 getDeviceId();
 void setId(u16 id);
 void setSecurity(bool_t enable);
 void setKey(u16 sz, byte_ptr key);
+
+// Сканирует эфир на выбранном канале и возвращает идентийикатор сервера
+void ScanEfire(BaseSize_t channel, ClientData_t* serverID);
 
 /* Отправка данных зашифрованным каналом
  * message - указатель на данные которые необходимо отправить
