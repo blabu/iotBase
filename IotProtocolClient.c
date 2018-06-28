@@ -60,6 +60,10 @@ ProtocolStatus_t GetLastStatus() {
 	return temp;
 }
 
+static u08 getTypeById(u16 Id) {
+	return (u08)(Id>>8);
+}
+
 static bool_t isCorrect(u16 id) {
 	if(id > 0xFF) return TRUE;
 	return FALSE;
@@ -86,12 +90,11 @@ void ScanEfire(BaseSize_t channel, ClientData_t* serverID) {
 		SetTimerTask(enableTranseiver,0,NULL,2);
 		return;
 	case 2: // Отправляем пинг
-		msg.isWrite = TRUE;
+		msg.messageType = SimpleWrite; msg.messageID = 0;
 		msg.deviceID = device.Id;
-		msg.version = 0;
-		msg.data = serverID->second;
-		msg.dataSize = serverID->first;
-		memCpy(msg.data,"ping;",strSize("ping:")+1);
+		msg.isSecure = FALSE;
+		msg.data = serverID->second; msg.dataSize = serverID->first;
+		memCpy(msg.data,"some message",strSize("some message")+1);
 		u08 sz = formFrame(PROTOCOL_BUFFER_SIZE,BufTransmit,&msg);
 		if(!sz) {
 			count = 0xFF;
@@ -137,7 +140,9 @@ void ScanEfire(BaseSize_t channel, ClientData_t* serverID) {
 // Отправка сообщения обновления ключа шифрования
 void WriteClient(u16 size, byte_ptr message) {
 	static u08 count = 0;
-	static byte_ptr cypherMsg = NULL;
+	static u08 messageCnt = 0;
+	static u08 cypherMsg[KEY_SIZE];
+	u08 tempMessage[KEY_SIZE];
 	u16 sz;
 	message_t msg;
 	if(!device.Id) {
@@ -149,51 +154,38 @@ void WriteClient(u16 size, byte_ptr message) {
 	if(currentStatus && currentStatus != STATUS_OK) count = 0xFF;
 	switch(count) {
 	case 0: // Подготовка
-		writeLogStr("START write to server");
+		writeLogStr("-----------/nStart write to server");
 		if(!isCorrect(device.Id)) {
 			currentStatus = DEVICEID_IS_NULL;
 			execCallBack(WriteClient);
 			return;
 		}
 		currentStatus = 0;
-		if(cypherMsg != NULL) freeMem(cypherMsg);
-		sz = size;
-		while((sz & 0x0F) & 0x0F) sz++; // Дополняем размер до кратного 16-ти байт (размер блока)
-		if(sz > PROTOCOL_BUFFER_SIZE) {count = 0xFF; currentStatus = STATUS_NO_SEND; break;}
-		cypherMsg = allocMem(sz);
-		if(cypherMsg == NULL) {
-			count=0xFF;
-			writeLogStr("ERROR: Mem error");
-			currentStatus = MEMMORY_ALOC_ERR;
-			break;
-		}
+		memSet(cypherMsg,KEY_SIZE,0);
 		count++;
 		SetTask(enableTranseiver,0,0);
 		registerCallBack((TaskMng)WriteClient,size,message,enableTranseiver);
 		return;
 	case 1: // Шифруем и отправляем
-		sz = getAllocateMemmorySize(cypherMsg);
-		byte_ptr tempMessage = message;
-		if(sz > size) { // Дополняем сообщение нулями при необходимости
-			tempMessage = allocMem(sz); if(tempMessage == NULL) {currentStatus = STATUS_NO_SEND; break;}
-			memCpy(tempMessage,message,size);
-			memSet(tempMessage+size,sz-size,0); // Дополняем до кратного 16-ти исходное сообщение нулями
+		memCpy(tempMessage,message,KEY_SIZE);
+		if(size > KEY_SIZE) { //Если сообщение передать с одного раза не удается
+			message += KEY_SIZE;
+			size -= KEY_SIZE;
+			msg.dataSize = KEY_SIZE;
+		} else{
+			msg.dataSize = size;
+			size = 0;
 		}
-		for(u08 i = 0; i<sz; i+=KEY_SIZE) { // Шифруем
-			if(device.isSecure) AesEcbEncrypt(tempMessage+i,device.Key,cypherMsg+i);
-			else memCpy(cypherMsg+i,tempMessage+i,KEY_SIZE);
-		}
-		freeMem(tempMessage);
+		if(device.isSecure) {msg.dataSize = KEY_SIZE; AesEcbEncrypt(tempMessage,device.Key,cypherMsg); }
+		else memCpy(cypherMsg,tempMessage,msg.dataSize);
 		msg.data = cypherMsg;
-		msg.dataSize = sz;
 		msg.deviceID = device.Id;
-		msg.isWrite = TRUE;
-		if(device.isSecure) msg.version = 1;
-		else msg.version = 0;
+		msg.messageType = SimpleWrite;
+		msg.messageID = messageCnt;
+		msg.isSecure = device.isSecure;
 		sz = formFrame(PROTOCOL_BUFFER_SIZE, BufTransmit, &msg);  // Формируем
 		if(!sz) { // Формируем
-			count=0xFF;
-			writeLogStr("ERROR: Can not form msg");
+			count=0xFF; writeLogStr("ERROR: Can not form msg");
 			currentStatus = STATUS_NO_SEND;
 			break;
 		}
@@ -208,11 +200,10 @@ void WriteClient(u16 size, byte_ptr message) {
 		SetTask((TaskMng)receiveFrom, PROTOCOL_BUFFER_SIZE, BufReceive); // Ждем ответ
 		return;
 	case 3: // Парсим ответ В ответ должен был прийти новый ключ шифрования
-		sz = getAllocateMemmorySize(cypherMsg);
 		msg.data = cypherMsg;
-		msg.dataSize = sz;
+		msg.dataSize = KEY_SIZE;
 		sz = parseFrame(PROTOCOL_BUFFER_SIZE, BufReceive, &msg);
-		if(msg.deviceID != device.Id) {
+		if(msg.deviceID != device.Id) { // Сообщение не тебе
 				currentStatus = STATUS_NO_SEND; // То мы получили не свой пакет
 				writeLogWhithStr("ERROR: Incorrect DeviceId ", msg.deviceID);
 				writeLogU32(device.Id);
@@ -225,16 +216,25 @@ void WriteClient(u16 size, byte_ptr message) {
 			count = 0xFF;
 			break;
 		}
-		switch(msg.version) {
-			case 0: device.isSecure = FALSE; writeLogStr("WARN: Not secure\r\n"); break;
-			case 1: device.isSecure = TRUE; break;
-			default: device.isSecure = FALSE; writeLogStr("WARN: Protocol undef\r\n"); // Undefine version type
-		}
+		device.isSecure = msg.isSecure;
 		if(device.isSecure) {
 			AesEcbDecrypt(cypherMsg,device.Key,BufReceive); // Расшифровуем полученное сообщение
-			memCpy(device.Key,BufReceive,KEY_SIZE);
+			if(BufReceive[0] == getTypeById(device.Id))	memCpy(device.Key,BufReceive,KEY_SIZE);
+			else {
+				writeLogStr("ERROR: Invalid security key");
+				count = 0xFF;
+				break;
+			}
 		}
-		else  memCpy(device.Key,cypherMsg,KEY_SIZE); // Без шифрования
+		else  {// Без шифрования
+			writeLogStr("WARN: Not secure\r\n");
+			if(cypherMsg[0] == getTypeById(device.Id)) memCpy(device.Key,cypherMsg,KEY_SIZE);
+			else {
+				writeLogStr("ERROR: Invalid security key");
+				count = 0xFF;
+				break;
+			}
+		}
 		count++;
 		registerCallBack((TaskMng)WriteClient,size,(BaseParam_t)message, saveParameters);
 		saveParameters(device.Id,device.Key,KEY_SIZE,device.isSecure);
@@ -242,74 +242,22 @@ void WriteClient(u16 size, byte_ptr message) {
 		return;
 	case 4: // Отправка подтверждения о получении ключа шифрования
 		msg.data = (byte_ptr)OK;
-		msg.dataSize = strSize(OK);
+		msg.dataSize = KEY_SIZE;
 		msg.deviceID = device.Id;
-		msg.isWrite = TRUE;
-		if(device.isSecure) msg.version = 1;
-		else msg.version = 0;
-		while((msg.dataSize & 0x0F) & 0x0F) msg.dataSize++;
+		msg.messageType = SimpleWrite;
+		msg.isSecure = device.isSecure;
 		if(device.isSecure) AesEcbEncrypt(msg.data,device.Key,cypherMsg);
 		else memCpy(cypherMsg,msg.data,KEY_SIZE);
 		msg.data = cypherMsg;
 		sz = formFrame(PROTOCOL_BUFFER_SIZE, BufTransmit, &msg);
-		count=11; // FIXME Перескакиваем подтверждение о приеме ОК
+		count++;
 		registerCallBack((TaskMng)WriteClient,size,(BaseParam_t)message, sendTo);
 		SetTask((TaskMng)sendTo,sz, BufTransmit);
 		return;
-	case 5:  // Ждем ОК
-		count++;
-		memSet(BufReceive,PROTOCOL_BUFFER_SIZE,0); // Очищаем буфер
-		registerCallBack((TaskMng)WriteClient, size, (BaseParam_t)message, receiveFrom);
-		SetTask((TaskMng)receiveFrom, PROTOCOL_BUFFER_SIZE, BufReceive); // Ждем ответ
-		return;
-	case 6: // Парсим ответ (ожидаем подтверждение об окончании сессии)
-		sz = getAllocateMemmorySize(cypherMsg);
-		msg.data = cypherMsg;
-		msg.dataSize = sz;
-		sz = parseFrame(PROTOCOL_BUFFER_SIZE, BufReceive, &msg);
-		if(msg.deviceID != device.Id) {
-				currentStatus = STATUS_NO_SEND; // То мы получили не свой пакет
-				writeLogWhithStr("ERROR: Icorrect DeviceId ", msg.deviceID);
-				writeLogU32(device.Id);
-				writeLogStr((string_t)BufReceive);
-				count = 0xFF;
-				break;
-		}
-		if(sz != KEY_SIZE) { // Если размер полезной информации не соответствует ключу значит произошла ошибка
-			writeLogStr("ERROR: Incorrect size for receive msg");
-			currentStatus = STATUS_NO_SEND;
-			count = 0xFF;
-			break;
-		}
-		switch(msg.version) {
-			case 0: device.isSecure = FALSE; writeLogStr("WARN: Not secure\r\n"); break;
-			case 1: device.isSecure = TRUE; break;
-			default: device.isSecure = FALSE; writeLogStr("WARN: Protocol undef\r\n"); // Undefine version type
-		}
-		if(device.isSecure) {
-			AesEcbDecrypt(cypherMsg,device.Key,BufReceive); // Расшифровуем полученное сообщение
-			if(findStr(OK,(string_t)BufReceive) >= 0) {
-				count++;
-				break;
-			}
-		}else {
-			if(findStr(OK,(string_t)cypherMsg) >= 0) {
-				count++;
-				break;
-			}
-		}
-		count = 0xFF;
-		currentStatus = STATUS_NO_SEND;
-		writeLogStr("ERROR: OK not find");
-		break;
-	case 7: // OK успешно ПОЛУЧЕН
-		currentStatus = STATUS_OK;
-		writeLogStr("OK finded");
-		//no break
 	default:
 		writeLogStr("FINISH write to server");
 		count = 0;
-		freeMem(cypherMsg); cypherMsg = NULL;
+		messageCnt = 0;
 		changeCallBackLabel((TaskMng)WriteClient,disableTranseiver);
 		SetTask(disableTranseiver,0,0);
 		return;
@@ -330,9 +278,7 @@ void ReadClient(u16 size, byte_ptr result) {
 		writeLogStr("START read from server");
 		currentStatus = 0;
 		if(size > PROTOCOL_BUFFER_SIZE) {// Больше этого мы считать не сможем
-			count = 0xFF;
-			currentStatus = STATUS_NO_RECEIVE;
-			break;
+			count = 0xFF; currentStatus = STATUS_NO_RECEIVE; break;
 		}
 		count++;
 		SetTask(enableTranseiver,0,0);
@@ -344,23 +290,22 @@ void ReadClient(u16 size, byte_ptr result) {
 		sz = strSize((string_t)temp);
 		memCpy(temp+sz, result, KEY_SIZE-sz); // В оставшееся пространство копируем текст запроса (Если он есть)
 		temp[KEY_SIZE-1]=0;
-		if(device.isSecure) AesEcbEncrypt(temp,device.Key,cypherMsg); // Эта информация точно будет меньше 16-ти байт (одного блока)
+		if(device.isSecure) AesEcbEncrypt(temp,device.Key,cypherMsg); // Эта информация точно будет меньше размера ключа
 		else memCpy(cypherMsg,temp,sz); // Если без шифрования
 		msg.data = cypherMsg;
 		msg.dataSize = KEY_SIZE;
 		msg.deviceID = device.Id;
-		msg.isWrite = FALSE;
-		if(device.isSecure) msg.version = 1;
-		else msg.version = 0;
+		msg.messageType = SimpleRead;
+		msg.messageID = 0;
+		msg.isSecure = device.isSecure;
 		sz = formFrame(PROTOCOL_BUFFER_SIZE, BufTransmit, &msg);
 		if(!sz) {
 			currentStatus = STATUS_NO_RECEIVE;
-			count = 0xFF;
 			break;
 		}
 		count++;
 		registerCallBack((TaskMng)ReadClient,size,result,sendTo);
-		SetTimerTask((TaskMng)sendTo,sz,BufTransmit,2);
+		SetTimerTask((TaskMng)sendTo, sz, BufTransmit, 2);
 		return;
 	case 2:  // Собственно само чтение
 		count++;
@@ -369,15 +314,8 @@ void ReadClient(u16 size, byte_ptr result) {
 		SetTask((TaskMng)receiveFrom,PROTOCOL_BUFFER_SIZE,BufReceive);
 		return;
 	case 3: // Разшифровуем данные
-		sz = size;
-		while((sz & 0x0F) & 0x0F) sz++; // Дополняем размер до кратного 16-ти байт (размер блока)
-		msg.data = allocMem(sz);
-		if(msg.data == NULL) { // Закончилась память
-			count = 0xFF;
-			currentStatus = MEMMORY_ALOC_ERR;
-			break;
-		}
-		msg.dataSize = sz;
+		msg.dataSize = KEY_SIZE;
+		msg.data = temp;
 		if(!parseFrame(PROTOCOL_BUFFER_SIZE, BufReceive, &msg)) {
 				writeLogStr("ERROR: Not receive answer\r\n");
 				currentStatus = STATUS_NO_SEND;
@@ -385,96 +323,38 @@ void ReadClient(u16 size, byte_ptr result) {
 				break;
 		}
 		if(msg.deviceID != device.Id) {
-			freeMem(msg.data);
 			count = 0xFF;
 			writeLogWhithStr("ERROR: Icorrect DeviceId ", msg.deviceID);
 			writeLogU32(device.Id);
 			currentStatus = STATUS_NO_RECEIVE;
 			break;
 		}
-		switch(msg.version) {
-		case 0:	device.isSecure = FALSE;  writeLogStr("WARN: Not secure\r\n"); break;
-		case 1:	device.isSecure = TRUE;	break;
-		default:device.isSecure = FALSE;  writeLogStr("WARN: Protocol undef\r\n");
-		}
-		for(u16 i = 0; i<sz; i+=KEY_SIZE) {
-			if(device.isSecure) AesEcbDecrypt(msg.data+i,device.Key,BufReceive+i);
-			else memCpy(BufReceive+i,msg.data+i,KEY_SIZE);
+		device.isSecure = msg.isSecure;
+		if(device.isSecure) AesEcbDecrypt(msg.data,device.Key,BufReceive);
+		else {
+			writeLogStr("WARN: Not secure\r\n");
+			memCpy(BufReceive,msg.data,KEY_SIZE);
 		}
 		memCpy(result,BufReceive,size);
-		freeMem(msg.data);
 		count++;
 		break;
 	case 4:  // Отправляем ОК
 		msg.data = (byte_ptr)OK;
-		msg.dataSize = strSize(OK);
+		msg.dataSize = strSize((string_t)msg.data);
 		msg.deviceID = device.Id;
-		msg.isWrite = TRUE;
+		msg.messageType = SimpleWrite;
+		msg.isSecure = device.isSecure;
 		if(device.isSecure) {
-			msg.version = 1;
-			while((msg.dataSize & 0x0F) & 0x0F) msg.dataSize++;
-		}
-		else msg.version = 0;
-		if(device.isSecure) {
+			msg.dataSize = KEY_SIZE;
 			AesEcbEncrypt(msg.data,device.Key,cypherMsg);
 			msg.data = cypherMsg;
 		}
 		sz = formFrame(PROTOCOL_BUFFER_SIZE, BufTransmit, &msg);
-		count=11; // FIXME Перескакиваем подтверждение о приеме ОК
+		count++;
 		registerCallBack((TaskMng)ReadClient,size,result,sendTo);
 		SetTask((TaskMng)sendTo,sz,BufTransmit);
 		currentStatus = STATUS_OK;
 		return;
-	case 5: // ОК отправили ждем подтверждения
-		count++;
-		memSet(BufReceive,PROTOCOL_BUFFER_SIZE,0); // Очищаем буфер
-		registerCallBack((TaskMng)ReadClient, size, result, receiveFrom);
-		SetTask((TaskMng)receiveFrom, PROTOCOL_BUFFER_SIZE, BufReceive); // Ждем ответ
-		return;
-	case 6: // Парсим ответ (ожидаем подтверждение об окончании сессии)
-		sz = getAllocateMemmorySize(cypherMsg);
-		msg.data = cypherMsg;
-		msg.dataSize = KEY_SIZE;
-		sz = parseFrame(PROTOCOL_BUFFER_SIZE, BufReceive, &msg);
-		if(msg.deviceID != device.Id) {
-				currentStatus = STATUS_NO_SEND; // То мы получили не свой пакет
-				writeLogWhithStr("ERROR: Icorrect DeviceId ", msg.deviceID);
-				writeLogStr((string_t)BufReceive);
-				writeLogU32(device.Id);
-				count = 0xFF;
-				break;
-		}
-		if(sz != KEY_SIZE) { // Если размер полезной информации не соответствует ключу значит произошла ошибка
-			currentStatus = STATUS_NO_SEND;
-			writeLogStr("ERROR: Incorrect size received msg");
-			count = 0xFF;
-			break;
-		}
-		switch(msg.version) {
-			case 0: device.isSecure = FALSE; writeLogStr("WARN: Not secure\r\n"); break;
-			case 1: device.isSecure = TRUE; break;
-			default: device.isSecure = FALSE; writeLogStr("WARN: Protocol undef\r\n"); // Undefine version type
-		}
-		if(device.isSecure) {
-			AesEcbDecrypt(cypherMsg,device.Key,BufReceive); // Расшифровуем полученное сообщение
-			if(findStr(OK,(string_t)BufReceive) >= 0) {
-				count++;
-				break;
-			}
-		}else {
-			if(findStr(OK,(string_t)cypherMsg) >= 0) {
-				count++;
-				break;
-			}
-		}
-		count = 0xFF;
-		currentStatus = STATUS_NO_SEND;
-		writeLogStr("ERROR: OK not find");
-		break;
-	case 7: // ОК успешно ПОЛУЧЕН
-		writeLogStr("OK finded");
-		currentStatus = STATUS_OK;
-		// no break
 	default:
 		writeLogStr("FINISH read from server");
 		count = 0;

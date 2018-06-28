@@ -114,7 +114,7 @@ void sendTo(u16 size, byte_ptr data) {
 
 // Функция получения данных полученные данные будут записаны по указателю result, но не более размера size
 void receiveFrom(u16 size, byte_ptr result) {
-	static const u08 ATTEMPT = 37; // 37 раз пытаемся прочитать с интервалом TIME_DELAY_IF_BUSY
+	static const u08 ATTEMPT = 237; // 237 раз пытаемся прочитать с интервалом TIME_DELAY_IF_BUSY
 	static u08 tryReceiveAttempt = ATTEMPT;
 	if(receiveBuf.buff != NULL) { // Если есть данные
 		tryReceiveAttempt = ATTEMPT;

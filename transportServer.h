@@ -9,7 +9,6 @@
 #define TRANSPORTSERVER_H_
 
 #include "TaskMngr.h"
-#include "List.h"
 #include "baseEntity.h"
 
 #ifndef PROTOCOL_BUFFER_SIZE
@@ -27,17 +26,5 @@ void receiveFromClient(u16 sessionID, ClientData_t *result);
 
 // Вернет идентификатор следующего готового узла для работы. (0 означает, что нет готовых узлов)
 u16 getNextReadyDevice();
-
-// Функция обновления устройства
-void updateDevice(Device_t* dev);
-
-//Функция получения параметров из памяти. Должна расположить данные по переданным указателям
-void getAllParameters(ListNode_t* DeviceList);
-
-void addNewDevice(Device_t* dev);
-
-void savePushedDevice(u16 sessionID, byte_ptr pushAddr);
-
-void getAllPushedDevice(ListNode_t* PushedList);
 
 #endif /* TRANSPORTSERVER_H_ */

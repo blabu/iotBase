@@ -9,9 +9,7 @@
 #define CONFIG_H_
 
 
-#define SERVER
+//#define SERVER
 #define RETRY_ENABLE
-//#define ASCII_FRAME
-
 
 #endif /* CONFIG_H_ */

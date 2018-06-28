@@ -10,7 +10,7 @@
 
 #include "TaskMngr.h"
 
-#define KEY_SIZE 16
+#define KEY_SIZE 24
 
 // Данные об устройстве
 typedef struct {
@@ -37,6 +37,11 @@ typedef struct {
 	u08 dataLength;	// Длина буфера приема-передачи
 }channel_t;
 
+typedef struct {
+	Device_t* dev;
+	channel_t chan;
+}PushDev_t;
+
 // Характеризует данные в конкретной сессии сс устройством.
 // Работает на транспортном уровне
 typedef struct {
@@ -48,14 +53,5 @@ typedef struct {
 } channelBuff_t;
 
 extern const u08 PING_ADDR[5];
-
-// Структура десериализованного сообщения
-typedef struct {
-	u08 version;		 // версия протокола указывает по зашифрованному или нет каналу передаются данные (0 - НЕ зашифрованный 1 - зашифрованный)
-	bool_t isWrite; 	 // флаг указывает на запись или на чтение формруется пакет
-	u16 deviceID;				 // идентификатор устройства
-	u16 dataSize;		 // размер полезной информации
-	byte_ptr data;		 // указатель на полезную информацию для передачи (ЗАШИФРОВАННУЮ)
-}message_t;
 
 #endif /* BASEENTITY_H_ */

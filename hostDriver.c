@@ -1,20 +1,18 @@
 /*
- * saveServer.c
+ * hostDriverAPI.c
  *
  *  Created on: 9 июн. 2018 г.
  *      Author: blabu
  */
 
-#include "IotProtocolServer.h"
 #include "logging.h"
 #include "MyString.h"
-#include "baseEntity.h"
-#include "List.h"
+#include "hostDriverAPI.h"
 #include "utility.h"
 #include "usbd_cdc_if.h"
 
 void updateDevice(Device_t* dev) {
-	static char str[47];  //UP=S;XXXX;YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY;\r\n
+	static char str[63];  //UP=S;XXXX;YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY;\r\n
 	strClear(str);
 	strCat(str,"UP=");
 	serializeDevice(str+strSize(str),dev);
@@ -23,7 +21,7 @@ void updateDevice(Device_t* dev) {
 }
 
 void addNewDevice(Device_t* dev) {
-	static char str[47];  //NEW=S;XXXX;YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY;\r\n
+	static char str[63];  //NEW=S;XXXX;YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY;\r\n
 	strClear(str);
 	strCat(str,"NEW=");
 	serializeDevice(str+strSize(str),dev);
@@ -32,12 +30,13 @@ void addNewDevice(Device_t* dev) {
 }
 
 //Функция получения параметров из памяти. Должна расположить данные по переданным указателям
-void getAllParameters(ListNode_t* DeviceList) {
+void getAllParameters(BaseSize_t count, ListNode_t* DeviceList) {
 	writeLogStr("Get all parameters");
 	execCallBack(getAllParameters);
 }
 
-void getAllPushedDevice(ListNode_t* PushedList) {
+void getAllPushedDevice(BaseSize_t count, ListNode_t* PushedList) {
+	writeLogStr("Get all pushed device");
 	execCallBack(getAllPushedDevice);
 }
 

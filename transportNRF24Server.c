@@ -116,7 +116,6 @@ void initTransportLayer(u08 channel, byte_ptr serverID) {
 			else if(k==1) registerCallBack((TaskMng)RX_MODE_2,receiveBuf[k][i].pipeNumber,(BaseParam_t)(&receiveBuf[k][i].pipe),(u32*)RX_MODE_2+receiveBuf[k][i-1].pipeNumber);
 		}
 	}
-
 	SetTask(configureNRF24_1,nRF24_DR_250kbps,NULL);
 	registerCallBack((TaskMng)RX_MODE_1,receiveBuf[0][0].pipeNumber,(BaseParam_t)(&receiveBuf[0][0].pipe),configureNRF24_1);
 	registerCallBack((TaskMng)FinishInitMultiReceiver_1,0, 0, (u32*)RX_MODE_1+receiveBuf[0][MAX_CHANNEL-1].pipeNumber);
@@ -128,7 +127,7 @@ void initTransportLayer(u08 channel, byte_ptr serverID) {
 	connectTaskToSignal(socetReceivePacet_2,(void*)signalNrf24ReceiveMessages_2);
 
 	changeCallBackLabel(initTransportLayer,FinishInitMultiReceiver_2);
-	writeLogStr("Start init server");
+	writeLogStr("INFO: Start init server");
 }
 
 static void offSession(BaseSize_t sessionID, BaseParam_t arg_p) {
@@ -138,7 +137,7 @@ static void offSession(BaseSize_t sessionID, BaseParam_t arg_p) {
 		execCallBack(((void*)(u32*)offSession+sessionID));
 		return;
 	}
-	writeLogWhithStr("Off session: ", sessionID);
+	writeLogWhithStr("INFO: Off session: ", sessionID);
 	u08 i = pipeNumb-1;
 	receiveBuf[moduleNumb][i].isBusy = FALSE; receiveBuf[moduleNumb][i].isReady = FALSE;
 	freeMem(receiveBuf[moduleNumb][i].buff);  receiveBuf[moduleNumb][i].buff = NULL;
@@ -188,15 +187,15 @@ static void Send(u16 sessionID,  ClientData_t *data) {
 	u08 pipeNumb = sessionID & 0xF;
 	u08 i = pipeNumb-1;
 	if(moduleNumb == 0) {
-		writeLogStr("Send nrf0:");
+		writeLogStr("INFO: Send nrf0:");
 		changeCallBackLabel((void*)((u32*)Send+sessionID),TransmitPacket_1);
 		SetTimerTask(TransmitPacket_1,receiveBuf[moduleNumb][i].pipe.dataLength,data->second,2); // Необходимо заполнить весь буфер (можно мусором)
 	} else if(moduleNumb == 1){
-		writeLogStr("Send nrf1:");
+		writeLogStr("INFO: Send nrf1:");
 		changeCallBackLabel((void*)((u32*)Send+sessionID),TransmitPacket_2);
 		SetTimerTask(TransmitPacket_2,receiveBuf[moduleNumb][i].pipe.dataLength,data->second,2); // Необходимо заполнить весь буфер (можно мусором)
 	} else {
-		writeLogStr("ERROR send");
+		writeLogStr("ERROR: send");
 		execCallBack((void*)((u32*)Send+sessionID));
 	}
 }
@@ -217,28 +216,59 @@ void sendToClient(u16 sessionID,  ClientData_t *data) {
 
 // В случае, когда сервер является инициатором передачи данных.
 void pushToClient(BaseSize_t count, channelBuff_t* client) {
+	if(count>0 && !client->isBusy) count = 0xFF;
 	switch(count) {
 	case 0: // Настраиваем передатчик
-		GET_MUTEX(NRF_MUTEX_1, pushToClient, count, client);// Если не удается пробуем захватить второй мьютекс
+		GET_MUTEX(NRF_MUTEX_1, pushToClient, count, client);
 		count++;
+		client->isBusy = TRUE; client->isReady = FALSE;
+		client->pipeNumber = 0;
 		registerCallBack((TaskMng)pushToClient,count,(BaseParam_t)client,TX_MODE_1);
 		SetTask((TaskMng)TX_MODE_1,0,(BaseParam_t)&client->pipe);
 		return;
 	case 1:
-		writeLogStr("PUSH:");
+		writeLogStr("INFO: PUSH:");
 		count++;
 		registerCallBack((TaskMng)pushToClient,count,(BaseParam_t)client,TransmitPacket_1);
-		SetTimerTask(TransmitPacket_1,client->pipe.dataLength, client->buff,2); // Необходимо заполнить весь буфер (можно мусором)
+		SetTimerTask(TransmitPacket_1,client->pipe.dataLength, client->buff, 2); // Необходимо заполнить весь буфер (можно мусором)
 		return;
-	case 2:
+	case 2: // Ждем ответ от клиента
+		count++;
+		memSet(client->buff,client->pipe.dataLength,0);
+		SetTimerTask(offSession, client->pipeNumber+1, NULL, OFF_TIMEOUT); // Таймоут на получение ответа от клиента
+		SetTask((TaskMng)RX_MODE_1,client->pipeNumber,(BaseParam_t)&client->pipe); // Выставляем модуль в режим приема
+		registerCallBack((TaskMng)FinishInitMultiReceiver_1,0,0,(u32*)RX_MODE_1+client->pipeNumber);
+		registerCallBack((TaskMng)pushToClient, count, (BaseParam_t)client, FinishInitMultiReceiver_1);
+		freeMem(receiveBuf[0][client->pipeNumber].buff); receiveBuf[0][client->pipeNumber].buff = NULL; // Очищаем буфер
+		return;
+	case 3:
+		if(receiveBuf[0][client->pipeNumber].buff != NULL) {
+			count++;
+			memCpy(client->buff,receiveBuf[0][client->pipeNumber].buff,client->pipe.dataLength);
+		} else {
+			writeSymb(':');
+			SetTimerTask((TaskMng)pushToClient,count,(BaseParam_t)client,2);
+			return;
+		}
+		// no break;
+	case 4: // Возвращаем все как было до отправки PUSH
 		count++;
 		SetTask((TaskMng)RX_MODE_1,receiveBuf[0][0].pipeNumber,(BaseParam_t)&receiveBuf[0][0].pipe);
 		registerCallBack((TaskMng)FinishInitMultiReceiver_1,0,0,(u32*)RX_MODE_1+receiveBuf[0][0].pipeNumber);
 		registerCallBack((TaskMng)pushToClient, count, (BaseParam_t)client, FinishInitMultiReceiver_1);
 		return;
-	case 3:
+	case 5:
 		freeMutex(NRF_MUTEX_1);
 		execCallBack((u32*)pushToClient+client->pipeNumber);
+		return;
+	default:
+		writeLogStr("WARN: Undef error when try pushing");
+		memSet(client->buff,client->pipe.dataLength,0);
+		SetTask((TaskMng)RX_MODE_1,receiveBuf[0][0].pipeNumber,(BaseParam_t)&receiveBuf[0][0].pipe);
+		registerCallBack((TaskMng)FinishInitMultiReceiver_1,0,0,(u32*)RX_MODE_1+receiveBuf[0][0].pipeNumber);
+		freeMutex(NRF_MUTEX_1);
+		execCallBack((u32*)pushToClient+client->pipeNumber);
+		return;
 	}
 }
 
@@ -258,7 +288,7 @@ void receiveFromClient(u16 sessionID, ClientData_t *result) {
 		memCpy(result->second,receiveBuf[moduleNumb][i].buff,result->first); // Читаем ровно столько сколько попросили
 		freeMem(receiveBuf[moduleNumb][i].buff);
 		receiveBuf[moduleNumb][i].buff = NULL; // Обнуляем буфер для получения следующих данных
-		writeLogWhithStr("Receive: ", sessionID);
+		writeLogWhithStr("INFO: Receive: ", sessionID);
 		execCallBack((void*)((u32*)receiveFromClient + sessionID));
 		return;
 	} else if (!receiveBuf[moduleNumb][i].isBusy) {

@@ -26,8 +26,6 @@
  * Заполнит поле CryptKey ключом шифрования используется AES128
  */
 
-static ClientData_t serverID;
-
 void Register(BaseSize_t type, BaseParam_t buffer){
 	static u08 count = 0;
 	byte_ptr buff = (byte_ptr)buffer;
@@ -40,10 +38,9 @@ void Register(BaseSize_t type, BaseParam_t buffer){
 		}
 		LED_ON();
 		writeLogStr("TRY REG:");
-		//writeLogByteArray(5, serverID.second);
 		GetLastStatus();
 		if(buff != NULL) freeMem(buff);
-		buff = allocMem(2+KEY_SIZE+1); // Идентификатор (два байта) + Ключ + запасной байт
+		buff = allocMem(KEY_SIZE); // Читать будем ключ шифрования где первые два байта - это сгенерированный идентификатор
 		if(buff == NULL) {
 			execCallBack(Register);
 			return;
@@ -53,7 +50,7 @@ void Register(BaseSize_t type, BaseParam_t buffer){
 		setSecurity(FALSE);
 		count++;
 		registerCallBack(Register,type,(BaseParam_t)buff,ReadClient);
-		SetTask((TaskMng)ReadClient,getAllocateMemmorySize(buff), (BaseParam_t)buff);
+		SetTask((TaskMng)ReadClient,KEY_SIZE, (BaseParam_t)buff);
 		return;
 	case 1: // Анализ ответа
 		id = *((u16*)buff); // Первые два байта это идентификатор
@@ -65,7 +62,7 @@ void Register(BaseSize_t type, BaseParam_t buffer){
 		}
 		count++;
 		registerCallBack(Register,type,(BaseParam_t)buff,saveParameters);
-		saveParameters(id, buff+2, KEY_SIZE, FALSE);
+		saveParameters(id, buff, KEY_SIZE, FALSE); // Сохраняем ключ шифрования и идентификатор в энергонезависимую память
 		return;
 	case 2:
 	default:
@@ -77,13 +74,13 @@ void Register(BaseSize_t type, BaseParam_t buffer){
 	}
 }
 
+static ClientData_t serverID;
 void FindServer(BaseSize_t count, BaseParam_t maxTry) {
 	static u08 serverChannel;
 	byte_ptr mxTry = (byte_ptr)maxTry;
 	switch(count) {
 	case 0:
-		setSeed(getTick() + maxTry);
-		serverChannel = RandomSimple() & 0x7F; // Генерируем случайный канал от 0 до 127
+		serverChannel = 115;//RandomSimple() & 0x7F; // Генерируем случайный канал от 0 до 127
 		if(serverID.second != NULL) freeMem(serverID.second);
 		serverID.second = allocMem(10); serverID.first = 10;
 		if(serverID.second == NULL) {count = 0xff; break;}
@@ -111,9 +108,9 @@ void FindServer(BaseSize_t count, BaseParam_t maxTry) {
 	case 2:
 		if(serverID.second[1] != 0 &&
 		   serverID.second[2] != 0 &&
-		   serverID.second[3] != 0) {// Нашли сервер
+		   serverID.second[3] != 0) {// Нашли сервер (хотябы три части отличны от нуля)
 			LED_OFF();
-			serverID.second[0] = 2;
+			serverID.second[0] = 3;
 			changeCallBackLabel(FindServer,initTransportLayer);
 			SetTimerTask((TaskMng)initTransportLayer,serverChannel,serverID.second, TICK_PER_SECOND<<4);
 			writeLogByteArray(5,serverID.second);

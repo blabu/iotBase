@@ -10,6 +10,8 @@
 
 #include "TaskMngr.h"
 
+const void* const AnswerAnalize;
+
 void initServer(u08 channel, byte_ptr serverID);
 void allowRegistration(bool_t isEnable);
 void ServerIotWork(BaseSize_t arg_n, BaseParam_t arg_p);
