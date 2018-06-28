@@ -120,7 +120,7 @@ static void NewDeviceCreate(BaseSize_t count, BaseParam_t client) {
 		SetTask((TaskMng)receiveFromClient,cl->sessionId,(BaseParam_t)(&cl->buff));
 		return;
 	case 3: //
-		count++;
+		count=5; //TODO Перескакиваем отправку ОК
 		msg.data = buff;
 		msg.dataSize = PROTOCOL_BUFFER_SIZE;
 		sz = parseFrame(getAllocateMemmorySize(cl->buff.second),cl->buff.second,&msg);
@@ -133,9 +133,23 @@ static void NewDeviceCreate(BaseSize_t count, BaseParam_t client) {
 		}else {
 			freeMem((void*)cl->dev);
 			writeLogStr("ERROR: REG OK not find\r\n");
+			count = 0xFF;
+			break;
 		}
-		//no break;
+		break;
 	case 4:
+		msg.data = (byte_ptr)OK;
+		msg.dataSize = strSize(OK);
+		msg.deviceID = cl->dev->Id;
+		msg.isWrite = TRUE;
+		msg.version = 0;
+		if(!formFrame(cl->buff.first,cl->buff.second,&msg)) {
+			count = 0xFF;
+			break;
+		}
+		changeCallBackLabel((void*)((u32*)NewDeviceCreate+ cl->sessionId), (void*)((u32*)sendToClient+cl->sessionId));
+		SetTask((TaskMng)sendToClient,cl->sessionId,(BaseParam_t)(&cl->buff));
+		return;
 	default:
 		execCallBack((void*)((u32*)NewDeviceCreate + cl->sessionId));
 		return;
@@ -189,6 +203,7 @@ static void DeviceWriteWork(BaseSize_t count, BaseParam_t client) { // Рабо�
 		else msg.version = 0;
 		msg.deviceID = cl->dev->Id;
 		if(!formFrame(cl->buff.first,cl->buff.second,&msg)){
+			writeLogStr("ERROR: Can not form frame");
 			count = 0xFF;
 			break;
 		}
@@ -201,8 +216,8 @@ static void DeviceWriteWork(BaseSize_t count, BaseParam_t client) { // Рабо�
 		registerCallBack(DeviceWriteWork,count, (BaseParam_t)cl, (void*)((u32*)receiveFromClient+cl->sessionId));
 		SetTask((TaskMng)receiveFromClient,cl->sessionId,(BaseParam_t)(&cl->buff));
 		return;
-	case 3: // ОК шифрованный
-		count++;
+	case 3: // Ожидаем ОК шифрованный
+		count=5; // TODO Перескакиваем отправку ОК
 		msg.data = tempBuff;
 		msg.dataSize = KEY_SIZE;
 		if(parseFrame(getAllocateMemmorySize(cl->buff.second),cl->buff.second,&msg) > 0) {
@@ -222,15 +237,37 @@ static void DeviceWriteWork(BaseSize_t count, BaseParam_t client) { // Рабо�
 				writeLogStr("TX OK finded\r\n");
 				return;
 			}else {
+				count = 0xFF;
 				cl->dev->isSecure = FALSE; // Ошибка в передачи ключа в следующей передачи ключ не шифруем
 				writeLogStr("ERROR: TX not OK\r\n");
 			}
 		}
 		else {
+			count = 0xFF;
 			cl->dev->isSecure = FALSE; // Ошибка в передачи ключа в следующей передачи ключ не шифруем
 			writeLogStr("ERROR: Parse not ok\r\n");
 		}
-		//no break;
+		break;
+	case 4: // Отправляем ОК (для надежности)
+		msg.data = (byte_ptr)OK;
+		msg.dataSize = strSize(OK);
+		msg.deviceID = cl->dev->Id;
+		msg.isWrite = TRUE;
+		if(cl->dev->isSecure) msg.version = 1;
+		else msg.version = 0;
+		while((msg.dataSize & 0x0F) & 0x0F) msg.dataSize++;
+		if(cl->dev->isSecure) {
+			AesEcbEncrypt(msg.data,cl->dev->Key,tempBuff);
+			msg.data = tempBuff;
+		}
+		if(!formFrame(cl->buff.first,cl->buff.second,&msg)) {
+			writeLogStr("ERROR: Can not form frame");
+			count = 0xFF;
+			break;
+		}
+		changeCallBackLabel((void*)((u32*)DeviceWriteWork + cl->sessionId), (void*)((u32*)sendToClient+cl->sessionId));
+		SetTask((TaskMng)sendToClient,cl->sessionId,(BaseParam_t)(&cl->buff));
+		return;
 	default:
 		execCallBack((void*)((u32*)DeviceWriteWork + cl->sessionId));
 		return;
@@ -297,7 +334,7 @@ static void DeviceReadWork(BaseSize_t count, BaseParam_t client) { // Работ
 		SetTask((TaskMng)receiveFromClient, cl->sessionId, (BaseParam_t)(&cl->buff));
 		return;
 	case 3: // ОК шифрованный
-		count++;
+		count=5; // TODO Перескакиваем отправку ОК
 		msg.data = tempArray;
 		msg.dataSize = PROTOCOL_BUFFER_SIZE;
 		if(parseFrame(cl->buff.first,cl->buff.second,&msg) > 0) {
@@ -313,12 +350,33 @@ static void DeviceReadWork(BaseSize_t count, BaseParam_t client) { // Работ
 				writeLogStr("RX OK find\r\n");
 			}else {
 				writeLogTempString("ERROR: RX not OK\r\n");
+				count = 0xFF; break;
 			}
 		}
 		else {
 			writeLogTempString("ERROR: Parse not OK\r\n");
+			count = 0xFF; break;
 		}
-		//no break;
+		break;
+	case 4: // Отправляем ОК (для надежности)
+		msg.data = (byte_ptr)OK;
+		msg.dataSize = strSize(OK);
+		msg.deviceID = cl->dev->Id;
+		msg.isWrite = TRUE;
+		if(cl->dev->isSecure) msg.version = 1;
+		else msg.version = 0;
+		while((msg.dataSize & 0x0F) & 0x0F) msg.dataSize++;
+		if(cl->dev->isSecure) {
+			AesEcbEncrypt(msg.data,cl->dev->Key,tempArray);
+			msg.data = tempArray;
+		}
+		if(!formFrame(cl->buff.first,cl->buff.second,&msg)) {
+			count = 0xFF;
+			break;
+		}
+		changeCallBackLabel((void*)((u32*)DeviceReadWork + cl->sessionId), (void*)((u32*)sendToClient+cl->sessionId));
+		SetTask((TaskMng)sendToClient,cl->sessionId,(BaseParam_t)(&cl->buff));
+		return;
 	default:
 		execCallBack((void*)((u32*)DeviceReadWork + cl->sessionId));
 		return;
@@ -446,6 +504,7 @@ void SetClientHandlers(TaskMng writeHandler, TaskMng readHandler) {
 }
 
 void ServerIotWork(BaseSize_t arg_n, BaseParam_t arg_p) {
+	writeLogStr("Start work server");
 	if(DeviceList == NULL) {
 		registerCallBack(ServerIotWork,arg_n,arg_p,initializeList);
 		initializeList();

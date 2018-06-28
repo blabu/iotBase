@@ -1,11 +1,12 @@
 /*
- * ApplicationLayer.c
+0 * ApplicationLayer.c
  *
  *  Created on: Mar 22, 2018
  *      Author: okh
  */
 
 
+#include "PlatformSpecific.h"
 #include "IotProtocolClient.h"
 #include "ApplicationLayer.h"
 #include "transportClient.h"
@@ -39,7 +40,7 @@ void Register(BaseSize_t type, BaseParam_t buffer){
 		}
 		LED_ON();
 		writeLogStr("TRY REG:");
-		writeLogByteArray(5, serverID.second);
+		//writeLogByteArray(5, serverID.second);
 		GetLastStatus();
 		if(buff != NULL) freeMem(buff);
 		buff = allocMem(2+KEY_SIZE+1); // Идентификатор (два байта) + Ключ + запасной байт
@@ -81,8 +82,8 @@ void FindServer(BaseSize_t count, BaseParam_t maxTry) {
 	byte_ptr mxTry = (byte_ptr)maxTry;
 	switch(count) {
 	case 0:
-		setSeed(getTick());
-		serverChannel = 107;//RandomSimple() & 0x7F; // Генерируем случайный канал от 0 до 127
+		setSeed(getTick() + maxTry);
+		serverChannel = RandomSimple() & 0x7F; // Генерируем случайный канал от 0 до 127
 		if(serverID.second != NULL) freeMem(serverID.second);
 		serverID.second = allocMem(10); serverID.first = 10;
 		if(serverID.second == NULL) {count = 0xff; break;}
@@ -105,7 +106,7 @@ void FindServer(BaseSize_t count, BaseParam_t maxTry) {
 		temp[19] = 0;
 		writeLogTempString(temp);
 		registerCallBack(FindServer,count, mxTry, ScanEfire);
-		SetTask((TaskMng)ScanEfire,serverChannel,&serverID);
+		SetTimerTask((TaskMng)ScanEfire,serverChannel,&serverID,10);
 		return;
 	case 2:
 		if(serverID.second[1] != 0 &&
@@ -114,7 +115,7 @@ void FindServer(BaseSize_t count, BaseParam_t maxTry) {
 			LED_OFF();
 			serverID.second[0] = 2;
 			changeCallBackLabel(FindServer,initTransportLayer);
-			SetTimerTask((TaskMng)initTransportLayer,serverChannel,serverID.second, 2000);
+			SetTimerTask((TaskMng)initTransportLayer,serverChannel,serverID.second, TICK_PER_SECOND<<4);
 			writeLogByteArray(5,serverID.second);
 			return;
 		}

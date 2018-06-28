@@ -6,6 +6,8 @@
  */
 #include "crypt.h"
 #include "frame.h"
+#include "config.h"
+
 
 const string_t OK = "OK;";
 
@@ -24,16 +26,6 @@ static u16 crc16(u16 size, byte_ptr data) {
 	return CRC16(size, data);
 }
 
-// Дополняет справа символом symb строку str до размера size
-static void fillRightStr(u16 size, string_t str, char symb) {
-	s16 s = size - strSize(str);
-	if(s <= 0) return;
-	shiftStringRight(s,str);
-	for(s16 i = 0; i<s; i++) {
-		str[i] = symb;
-	}
-}
-
 #ifndef NULL
 #define NULL 0
 #endif
@@ -49,6 +41,19 @@ static void fillRightStr(u16 size, string_t str, char symb) {
  * isSecure - флаг указывает по зашифрованному или нет каналу передаются данные
  * Возвращает размер сообщения (ноль если сформировать сообшение не удалось)
  * */
+
+#ifdef ASCII_FRAME
+
+// Дополняет справа символом symb строку str до размера size
+static void fillRightStr(u16 size, string_t str, char symb) {
+	s16 s = size - strSize(str);
+	if(s <= 0) return;
+	shiftStringRight(s,str);
+	for(s16 i = 0; i<s; i++) {
+		str[i] = symb;
+	}
+}
+
 static u16 formFrameAscii(const u16 maxSize, byte_ptr result, const message_t*const msg) {
 	if( sizeof(startByte)+VERSION_SIZE+MESSAGE_SIZE+ID_SIZE+DIRACTION_SIZE+CRC_SIZE + msg->dataSize > maxSize )
 		return 0; // Все сообщение не влезит в буфер
@@ -140,15 +145,19 @@ static u16 parseFrameAscii(const u16 sourceSize, const byte_ptr source, message_
 		}
 		return effectiveSize;
 	}
+	writeLogStr("ERROR: CRC incorrect");
 	result->deviceID = 0;
 	return 0;
 }
 
-
+#else
 static u16 parseFrameBinary(const u16 sourceSize, const byte_ptr source, message_t* result) {
 	if(result == NULL || result->data == NULL || result->dataSize == 0) return 0;
 	s16 poz = findSymb(startByte,(const string_t)source);
-	if(poz < 0)	return 0; // Не нашли стартовый символ
+	if(poz < 0)	{
+		writeLogStr("Undefined start symbol $");
+		return 0; // Не нашли стартовый символ
+	}
 	u16 savePoz = poz;
 	result->version = source[++poz];
 	u16 allMessageSize = source[++poz];
@@ -173,6 +182,7 @@ static u16 parseFrameBinary(const u16 sourceSize, const byte_ptr source, message
 			return result->dataSize;
 		}
 	}
+	writeLogStr("Incorrect checksum");
 	result->deviceID = 0;
 	return 0;
 }
@@ -197,14 +207,22 @@ static u16 formFrameBinary(const u16 maxSize, byte_ptr result, const message_t*c
 	result[sz+1] = (u08)(c >> 8);
 	return sz+2;
 }
-
+#endif
 
 
 
 u16 formFrame(const u16 maxSize, byte_ptr result, const message_t*const msg) {
+#ifdef ASCII_FRAME
+	return formFrameAscii(maxSize,result,msg);
+#else
 	return formFrameBinary(maxSize,result,msg);
+#endif
 }
 
 u16 parseFrame(const u16 sourceSize, const byte_ptr source, message_t* result) {
+#ifdef ASCII_FRAME
+	return parseFrameAscii(sourceSize, source, result);
+#else
 	return parseFrameBinary(sourceSize, source, result);
+#endif
 }

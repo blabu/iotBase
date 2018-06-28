@@ -69,6 +69,7 @@ static bool_t isCorrect(u16 id) {
 #define NULL 0
 #endif
 
+//Пингуем сервер. Работает только если устройство не зарегистрировано и на сервере разрешена регистрация
 void ScanEfire(BaseSize_t channel, ClientData_t* serverID) {
 	static u08 count = 0;
 	message_t msg;
@@ -82,10 +83,9 @@ void ScanEfire(BaseSize_t channel, ClientData_t* serverID) {
 	case 1:
 		count++;
 		registerCallBack((TaskMng)ScanEfire,channel,serverID,enableTranseiver);
-		SetTask(enableTranseiver,0,NULL);
+		SetTimerTask(enableTranseiver,0,NULL,2);
 		return;
-	case 2: case 3: count++; break;
-	case 4: // Отправляем пинг
+	case 2: // Отправляем пинг
 		msg.isWrite = TRUE;
 		msg.deviceID = device.Id;
 		msg.version = 0;
@@ -102,13 +102,13 @@ void ScanEfire(BaseSize_t channel, ClientData_t* serverID) {
 		registerCallBack((TaskMng)ScanEfire,channel,serverID,sendTo);
 		SetTask((TaskMng)sendTo,sz,BufTransmit);
 		return;
-	case 5:
+	case 3:
 		count++;
 		memSet(BufReceive,PROTOCOL_BUFFER_SIZE,0);
 		registerCallBack((TaskMng)ScanEfire,channel,serverID,receiveFrom);
 		SetTask((TaskMng)receiveFrom, PROTOCOL_BUFFER_SIZE, BufReceive);
 		return;
-	case 6: // Читаем ответ
+	case 4: // Читаем ответ
 		msg.data = serverID->second;
 		msg.dataSize = serverID->first;
 		if(!parseFrame(PROTOCOL_BUFFER_SIZE,BufReceive,&msg)) { // Если пропарсить не получилось значит ничего не пришло
@@ -125,7 +125,7 @@ void ScanEfire(BaseSize_t channel, ClientData_t* serverID) {
 		}
 		writeLogStr("Server find");
 		//no break;
-	default:
+	default: // Нашли серевр или нет все равно выключаем его
 		count = 0;
 		changeCallBackLabel(ScanEfire,disableTranseiver);
 		SetTask(disableTranseiver,0,0);
@@ -148,7 +148,7 @@ void WriteClient(u16 size, byte_ptr message) {
 	}
 	if(currentStatus && currentStatus != STATUS_OK) count = 0xFF;
 	switch(count) {
-	case 0:
+	case 0: // Подготовка
 		writeLogStr("START write to server");
 		if(!isCorrect(device.Id)) {
 			currentStatus = DEVICEID_IS_NULL;
@@ -163,6 +163,7 @@ void WriteClient(u16 size, byte_ptr message) {
 		cypherMsg = allocMem(sz);
 		if(cypherMsg == NULL) {
 			count=0xFF;
+			writeLogStr("ERROR: Mem error");
 			currentStatus = MEMMORY_ALOC_ERR;
 			break;
 		}
@@ -189,37 +190,38 @@ void WriteClient(u16 size, byte_ptr message) {
 		msg.isWrite = TRUE;
 		if(device.isSecure) msg.version = 1;
 		else msg.version = 0;
-		sz = formFrame(PROTOCOL_BUFFER_SIZE, BufTransmit, &msg); // Формируем
-		if(!sz) { // Сформировать не получилось
+		sz = formFrame(PROTOCOL_BUFFER_SIZE, BufTransmit, &msg);  // Формируем
+		if(!sz) { // Формируем
 			count=0xFF;
+			writeLogStr("ERROR: Can not form msg");
 			currentStatus = STATUS_NO_SEND;
 			break;
 		}
 		count++;
-		break;
-	case 2: case 3: count++; break; // Небольшая задержка перед отправкой
-	case 4:
 		registerCallBack((TaskMng)WriteClient, size, (BaseParam_t)message, sendTo);
-		SetTask((TaskMng)sendTo, sz, BufTransmit);
+		SetTimerTask((TaskMng)sendTo, sz, BufTransmit,2);
 		return;
-	case 5: // Получаем ответ (новый ключ шифрования если все впорядке. Зашифрованный предыдущим ключом)
+	case 2: // Получаем ответ (новый ключ шифрования если все в порядке. Зашифрованный предыдущим ключом)
 		count++;
 		memSet(BufReceive,PROTOCOL_BUFFER_SIZE,0); // Очищаем буфер
 		registerCallBack((TaskMng)WriteClient, size, (BaseParam_t)message, receiveFrom);
 		SetTask((TaskMng)receiveFrom, PROTOCOL_BUFFER_SIZE, BufReceive); // Ждем ответ
 		return;
-	case 6: // Парсим ответ В ответ должен был прийти новый ключ шифрования
+	case 3: // Парсим ответ В ответ должен был прийти новый ключ шифрования
 		sz = getAllocateMemmorySize(cypherMsg);
 		msg.data = cypherMsg;
 		msg.dataSize = sz;
 		sz = parseFrame(PROTOCOL_BUFFER_SIZE, BufReceive, &msg);
 		if(msg.deviceID != device.Id) {
 				currentStatus = STATUS_NO_SEND; // То мы получили не свой пакет
+				writeLogWhithStr("ERROR: Incorrect DeviceId ", msg.deviceID);
+				writeLogU32(device.Id);
 				count = 0xFF;
 				break;
 		}
 		if(sz != KEY_SIZE) { // Если размер полезной информации не соответствует ключу значит произошла ошибка
 			currentStatus = STATUS_NO_SEND;
+			writeLogStr("ERROR: Incorrect message size");
 			count = 0xFF;
 			break;
 		}
@@ -238,7 +240,7 @@ void WriteClient(u16 size, byte_ptr message) {
 		saveParameters(device.Id,device.Key,KEY_SIZE,device.isSecure);
 		currentStatus = STATUS_OK;
 		return;
-	case 7: // Отправка подтверждения о получении ключа шифрования
+	case 4: // Отправка подтверждения о получении ключа шифрования
 		msg.data = (byte_ptr)OK;
 		msg.dataSize = strSize(OK);
 		msg.deviceID = device.Id;
@@ -250,20 +252,66 @@ void WriteClient(u16 size, byte_ptr message) {
 		else memCpy(cypherMsg,msg.data,KEY_SIZE);
 		msg.data = cypherMsg;
 		sz = formFrame(PROTOCOL_BUFFER_SIZE, BufTransmit, &msg);
-		count++;
+		count=11; // FIXME Перескакиваем подтверждение о приеме ОК
 		registerCallBack((TaskMng)WriteClient,size,(BaseParam_t)message, sendTo);
 		SetTask((TaskMng)sendTo,sz, BufTransmit);
 		return;
-	case 8:
+	case 5:  // Ждем ОК
 		count++;
-		SetTask(disableTranseiver,0,0);
-		registerCallBack((TaskMng)WriteClient,size,message,disableTranseiver);
+		memSet(BufReceive,PROTOCOL_BUFFER_SIZE,0); // Очищаем буфер
+		registerCallBack((TaskMng)WriteClient, size, (BaseParam_t)message, receiveFrom);
+		SetTask((TaskMng)receiveFrom, PROTOCOL_BUFFER_SIZE, BufReceive); // Ждем ответ
 		return;
+	case 6: // Парсим ответ (ожидаем подтверждение об окончании сессии)
+		sz = getAllocateMemmorySize(cypherMsg);
+		msg.data = cypherMsg;
+		msg.dataSize = sz;
+		sz = parseFrame(PROTOCOL_BUFFER_SIZE, BufReceive, &msg);
+		if(msg.deviceID != device.Id) {
+				currentStatus = STATUS_NO_SEND; // То мы получили не свой пакет
+				writeLogWhithStr("ERROR: Icorrect DeviceId ", msg.deviceID);
+				writeLogU32(device.Id);
+				writeLogStr((string_t)BufReceive);
+				count = 0xFF;
+				break;
+		}
+		if(sz != KEY_SIZE) { // Если размер полезной информации не соответствует ключу значит произошла ошибка
+			writeLogStr("ERROR: Incorrect size for receive msg");
+			currentStatus = STATUS_NO_SEND;
+			count = 0xFF;
+			break;
+		}
+		switch(msg.version) {
+			case 0: device.isSecure = FALSE; writeLogStr("WARN: Not secure\r\n"); break;
+			case 1: device.isSecure = TRUE; break;
+			default: device.isSecure = FALSE; writeLogStr("WARN: Protocol undef\r\n"); // Undefine version type
+		}
+		if(device.isSecure) {
+			AesEcbDecrypt(cypherMsg,device.Key,BufReceive); // Расшифровуем полученное сообщение
+			if(findStr(OK,(string_t)BufReceive) >= 0) {
+				count++;
+				break;
+			}
+		}else {
+			if(findStr(OK,(string_t)cypherMsg) >= 0) {
+				count++;
+				break;
+			}
+		}
+		count = 0xFF;
+		currentStatus = STATUS_NO_SEND;
+		writeLogStr("ERROR: OK not find");
+		break;
+	case 7: // OK успешно ПОЛУЧЕН
+		currentStatus = STATUS_OK;
+		writeLogStr("OK finded");
+		//no break
 	default:
 		writeLogStr("FINISH write to server");
 		count = 0;
 		freeMem(cypherMsg); cypherMsg = NULL;
-		execCallBack(WriteClient);
+		changeCallBackLabel((TaskMng)WriteClient,disableTranseiver);
+		SetTask(disableTranseiver,0,0);
 		return;
 	}
 	SetTask((TaskMng)WriteClient,size,message);
@@ -272,8 +320,6 @@ void WriteClient(u16 size, byte_ptr message) {
 // Чтение данных с сервера
 // Отправляет запрос на сервер Максимальный размер читаемых данных. В ответ получим данные
 void ReadClient(u16 size, byte_ptr result) {
-	const u08 ATTEMPT = 5;
-	static u08 countAttempt = ATTEMPT;
 	static u08 count = 0;
 	u08 temp[KEY_SIZE], cypherMsg[KEY_SIZE];
 	message_t msg;
@@ -307,25 +353,22 @@ void ReadClient(u16 size, byte_ptr result) {
 		if(device.isSecure) msg.version = 1;
 		else msg.version = 0;
 		sz = formFrame(PROTOCOL_BUFFER_SIZE, BufTransmit, &msg);
-		if(sz) { // Если формирование фрейма прошло удачно
-			count++;
+		if(!sz) {
+			currentStatus = STATUS_NO_RECEIVE;
+			count = 0xFF;
 			break;
 		}
-		currentStatus = STATUS_NO_RECEIVE;
-		count = 0xFF;
-		break;
-	case 2: case 3: count++; break; // Не большая задержка перед отправкой
-	case 4: // Сама отправка данных
-		registerCallBack((TaskMng)ReadClient,size,result,sendTo);
-		SetTask((TaskMng)sendTo,sz,BufTransmit);
-		return;
-	case 5:  // Собственно само чтение
 		count++;
-		registerCallBack((TaskMng)ReadClient,size,result,receiveFrom);
+		registerCallBack((TaskMng)ReadClient,size,result,sendTo);
+		SetTimerTask((TaskMng)sendTo,sz,BufTransmit,2);
+		return;
+	case 2:  // Собственно само чтение
+		count++;
 		memSet(BufReceive,PROTOCOL_BUFFER_SIZE,0); // Очищаем буфер
+		registerCallBack((TaskMng)ReadClient,size,result,receiveFrom);
 		SetTask((TaskMng)receiveFrom,PROTOCOL_BUFFER_SIZE,BufReceive);
 		return;
-	case 6: // Разшифровуем данные
+	case 3: // Разшифровуем данные
 		sz = size;
 		while((sz & 0x0F) & 0x0F) sz++; // Дополняем размер до кратного 16-ти байт (размер блока)
 		msg.data = allocMem(sz);
@@ -336,19 +379,16 @@ void ReadClient(u16 size, byte_ptr result) {
 		}
 		msg.dataSize = sz;
 		if(!parseFrame(PROTOCOL_BUFFER_SIZE, BufReceive, &msg)) {
-			if(countAttempt) {
-				countAttempt--;
-				count = 1;
-				break;
-			}else {
 				writeLogStr("ERROR: Not receive answer\r\n");
-				count = 5;
+				currentStatus = STATUS_NO_SEND;
+				count = 0xFF;
 				break;
-			}
 		}
 		if(msg.deviceID != device.Id) {
 			freeMem(msg.data);
 			count = 0xFF;
+			writeLogWhithStr("ERROR: Icorrect DeviceId ", msg.deviceID);
+			writeLogU32(device.Id);
 			currentStatus = STATUS_NO_RECEIVE;
 			break;
 		}
@@ -365,7 +405,7 @@ void ReadClient(u16 size, byte_ptr result) {
 		freeMem(msg.data);
 		count++;
 		break;
-	case 7:  // Отправляем ОК
+	case 4:  // Отправляем ОК
 		msg.data = (byte_ptr)OK;
 		msg.dataSize = strSize(OK);
 		msg.deviceID = device.Id;
@@ -379,23 +419,67 @@ void ReadClient(u16 size, byte_ptr result) {
 			AesEcbEncrypt(msg.data,device.Key,cypherMsg);
 			msg.data = cypherMsg;
 		}
-		sz = formFrame(PROTOCOL_BUFFER_SIZE, BufTransmit, &msg); // Подтверждение без шифрования
-		count++;
+		sz = formFrame(PROTOCOL_BUFFER_SIZE, BufTransmit, &msg);
+		count=11; // FIXME Перескакиваем подтверждение о приеме ОК
 		registerCallBack((TaskMng)ReadClient,size,result,sendTo);
 		SetTask((TaskMng)sendTo,sz,BufTransmit);
 		currentStatus = STATUS_OK;
 		return;
-	case 8:  // ОК успешно отправлен
+	case 5: // ОК отправили ждем подтверждения
 		count++;
-		SetTask(disableTranseiver, 0, 0);
-		registerCallBack((TaskMng)ReadClient,size,result,disableTranseiver);
+		memSet(BufReceive,PROTOCOL_BUFFER_SIZE,0); // Очищаем буфер
+		registerCallBack((TaskMng)ReadClient, size, result, receiveFrom);
+		SetTask((TaskMng)receiveFrom, PROTOCOL_BUFFER_SIZE, BufReceive); // Ждем ответ
 		return;
-	case 9:
+	case 6: // Парсим ответ (ожидаем подтверждение об окончании сессии)
+		sz = getAllocateMemmorySize(cypherMsg);
+		msg.data = cypherMsg;
+		msg.dataSize = KEY_SIZE;
+		sz = parseFrame(PROTOCOL_BUFFER_SIZE, BufReceive, &msg);
+		if(msg.deviceID != device.Id) {
+				currentStatus = STATUS_NO_SEND; // То мы получили не свой пакет
+				writeLogWhithStr("ERROR: Icorrect DeviceId ", msg.deviceID);
+				writeLogStr((string_t)BufReceive);
+				writeLogU32(device.Id);
+				count = 0xFF;
+				break;
+		}
+		if(sz != KEY_SIZE) { // Если размер полезной информации не соответствует ключу значит произошла ошибка
+			currentStatus = STATUS_NO_SEND;
+			writeLogStr("ERROR: Incorrect size received msg");
+			count = 0xFF;
+			break;
+		}
+		switch(msg.version) {
+			case 0: device.isSecure = FALSE; writeLogStr("WARN: Not secure\r\n"); break;
+			case 1: device.isSecure = TRUE; break;
+			default: device.isSecure = FALSE; writeLogStr("WARN: Protocol undef\r\n"); // Undefine version type
+		}
+		if(device.isSecure) {
+			AesEcbDecrypt(cypherMsg,device.Key,BufReceive); // Расшифровуем полученное сообщение
+			if(findStr(OK,(string_t)BufReceive) >= 0) {
+				count++;
+				break;
+			}
+		}else {
+			if(findStr(OK,(string_t)cypherMsg) >= 0) {
+				count++;
+				break;
+			}
+		}
+		count = 0xFF;
+		currentStatus = STATUS_NO_SEND;
+		writeLogStr("ERROR: OK not find");
+		break;
+	case 7: // ОК успешно ПОЛУЧЕН
+		writeLogStr("OK finded");
+		currentStatus = STATUS_OK;
+		// no break
 	default:
 		writeLogStr("FINISH read from server");
 		count = 0;
-		countAttempt = ATTEMPT;
-		execCallBack(ReadClient);
+		changeCallBackLabel((TaskMng)ReadClient,disableTranseiver);
+		SetTask(disableTranseiver, 0, 0);
 		return;
 	}
 	SetTask((TaskMng)ReadClient,size,result);

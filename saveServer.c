@@ -33,6 +33,7 @@ void addNewDevice(Device_t* dev) {
 
 //Функция получения параметров из памяти. Должна расположить данные по переданным указателям
 void getAllParameters(ListNode_t* DeviceList) {
+	writeLogStr("Get all parameters");
 	execCallBack(getAllParameters);
 }
 

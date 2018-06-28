@@ -5,10 +5,10 @@
  *      Author: Admin
  */
 
+#include <nrf24AppLayer_1.h>
 #include "transportClient.h"
 #include "logging.h"
 #include "nrf24.h"
-#include "nrf24AppLayer.h"
 #include "config.h"
 #include "initLowLevelModule.h"
 #include "utility.h"
@@ -20,18 +20,22 @@
  * */
 
 #ifdef RETRY_ENABLE
-#define RX_MODE RXModeRetry
-#define TX_MODE TXModeRetry
+#define RX_MODE_1 RXModeRetry_1
+#define TX_MODE_1 TXModeRetry_1
 #else
-#define RX_MODE RXMode
-#define TX_MODE TXMode
+#define RX_MODE_1 RXMode_1
+#define TX_MODE_1 TXMode_1
+#endif
+
+#ifndef NULL
+#define NULL 0
 #endif
 
 static channelBuff_t receiveBuf;
 
 #ifndef SERVER
 static void socetReceivePacet(BaseSize_t pipeNumber, BaseParam_t buff) {
-	if(!receiveBuf.isBusy) {
+	if(pipeNumber == receiveBuf.pipeNumber) {
 		writeSymb('+');
 		receiveBuf.buff = buff;
 		receiveBuf.isBusy = TRUE;
@@ -39,9 +43,9 @@ static void socetReceivePacet(BaseSize_t pipeNumber, BaseParam_t buff) {
 }
 
 void initTransportLayer(u08 channel, byte_ptr serverID) {
-    nRF24_Init();
-	nRF24_SetPowerMode(1, nRF24_PWR_DOWN);
-	setChipEnable(1,FALSE);
+    nRF24_Init(0);
+	nRF24_SetPowerMode(0, nRF24_PWR_DOWN);
+	setChipEnable(0,FALSE);
 	receiveBuf.isReady = FALSE; receiveBuf.isBusy = FALSE;
 	receiveBuf.pipe.address[0] = serverID[0];  // Server address 1_5
 	receiveBuf.pipe.address[1] = serverID[1]; // Server address 1_1
@@ -51,9 +55,10 @@ void initTransportLayer(u08 channel, byte_ptr serverID) {
 	receiveBuf.pipe.channel = channel;
 	receiveBuf.pipe.dataLength = 32;
 	receiveBuf.pipeNumber = nRF24_PIPE1; // Нулевой занят для приема передатчика с подтверждением
+	disconnectTaskFromSignal(socetReceivePacet,(void*)signalNrf24ReceiveMessages_1);
 	connectTaskToSignal(socetReceivePacet,(void*)signalNrf24ReceiveMessages_1);
-	SetTask(configureNRF24,nRF24_DR_250kbps,NULL);
-	changeCallBackLabel(initTransportLayer,configureNRF24);
+	SetTask(configureNRF24_1,nRF24_DR_250kbps,NULL);
+	changeCallBackLabel(initTransportLayer,configureNRF24_1);
 }
 #endif
 
@@ -63,16 +68,16 @@ void enableTranseiver(BaseSize_t arg_n, BaseParam_t arg_p) {
 		return;
 	}
 	receiveBuf.isReady = TRUE;
-	SetTask((TaskMng)RX_MODE,receiveBuf.pipeNumber,(BaseParam_t)(&receiveBuf.pipe));
-	registerCallBack((TaskMng)FinishInitMultiReceiver,0,0,(u32*)RX_MODE+receiveBuf.pipeNumber);
-	changeCallBackLabel(enableTranseiver,FinishInitMultiReceiver);
+	SetTask((TaskMng)RX_MODE_1,receiveBuf.pipeNumber,(BaseParam_t)(&receiveBuf.pipe));
+	registerCallBack((TaskMng)FinishInitMultiReceiver_1,0,0,(u32*)RX_MODE_1+receiveBuf.pipeNumber);
+	changeCallBackLabel(enableTranseiver,FinishInitMultiReceiver_1);
 }
 
 void disableTranseiver(BaseSize_t arg_n, BaseParam_t arg_p) {
 	writeLogStr("TR OFF\r\n");
 	receiveBuf.isReady = FALSE; receiveBuf.isBusy = FALSE;
-	nRF24_SetPowerMode(1, nRF24_PWR_DOWN);
-	setChipEnable(1,FALSE);
+	nRF24_SetPowerMode(0, nRF24_PWR_DOWN);
+	setChipEnable(0,FALSE);
 	execCallBack(disableTranseiver);
 }
 
@@ -82,48 +87,45 @@ void sendTo(u16 size, byte_ptr data) {
 	if(!receiveBuf.isReady) count = 0xFF;
 	switch(count) {
 	case 0:
-		nRF24_SetPowerMode(1, nRF24_PWR_DOWN);
 		count++;
 		writeLogStr("SEND:");
-		registerCallBack((TaskMng)sendTo,size,(BaseParam_t)data,TX_MODE);
-		SetTask((TaskMng)TX_MODE,0,(BaseParam_t)&receiveBuf.pipe);
+		registerCallBack((TaskMng)sendTo,size,(BaseParam_t)data,TX_MODE_1);
+		SetTask((TaskMng)TX_MODE_1,0,(BaseParam_t)&receiveBuf.pipe);
 		return;
-	case 1:case 2: count++; SetTask((TaskMng)sendTo,size,data); break; // Задержка для модуля передачи данных
-	case 3:
+	case 1:case 2:case 3:case 4:case 5: count++; break; // Задержка для модуля передачи данных
+	case 6:
 		count++;
-		registerCallBack((TaskMng)sendTo,size,(BaseParam_t)data,TransmitPacket);
-		SetTask(TransmitPacket,receiveBuf.pipe.dataLength,data); // Необходимо заполнить весь буфер (можно мусором)
+		registerCallBack((TaskMng)sendTo,size,(BaseParam_t)data,TransmitPacket_1);
+		SetTask(TransmitPacket_1,receiveBuf.pipe.dataLength,data); // Необходимо заполнить весь буфер (можно мусором)
 		return;
-	case 4: // Возвращаемся в режим приема
-		count++;
-		nRF24_SetPowerMode(1, nRF24_PWR_DOWN);
-		SetTask((TaskMng)RX_MODE,receiveBuf.pipeNumber,(BaseParam_t)&receiveBuf.pipe);
-		registerCallBack((TaskMng)FinishInitMultiReceiver,0,0,(u32*)RX_MODE+receiveBuf.pipeNumber);
-		registerCallBack((TaskMng)sendTo,size,(BaseParam_t)data,FinishInitMultiReceiver);
+	case 7: // Возвращаемся в режим приема
+		count=0;
+		SetTask((TaskMng)RX_MODE_1,receiveBuf.pipeNumber,(BaseParam_t)&receiveBuf.pipe);
+		registerCallBack((TaskMng)FinishInitMultiReceiver_1,0,0,(u32*)RX_MODE_1+receiveBuf.pipeNumber);
+		changeCallBackLabel((TaskMng)sendTo,FinishInitMultiReceiver_1);
 		return;
-	case 5:
 	default:
 		count = 0;
 		execCallBack(sendTo);
 		return;
 	}
+	SetTask((TaskMng)sendTo,size,data);
 }
 
 // Функция получения данных полученные данные будут записаны по указателю result, но не более размера size
 void receiveFrom(u16 size, byte_ptr result) {
-	static const u08 ATTEMPT = 30; // 30 раз пытаемся прочитать с интервалом TIME_DELAY_IF_BUSY
+	static const u08 ATTEMPT = 37; // 37 раз пытаемся прочитать с интервалом TIME_DELAY_IF_BUSY
 	static u08 tryReceiveAttempt = ATTEMPT;
-	if(receiveBuf.isBusy && receiveBuf.buff != NULL) { // Если есть данные
+	if(receiveBuf.buff != NULL) { // Если есть данные
 		tryReceiveAttempt = ATTEMPT;
 		memCpy(result,receiveBuf.buff,size); // Читаем ровно столько сколько попросили
 		receiveBuf.buff = NULL; // Обнуляем буфер для получения следующих данных
-		receiveBuf.isBusy = FALSE;
 		writeLogStr("RECEIVE:");
 		execCallBack(receiveFrom);
 		return;
 	}
 	writeSymb('.');
-	if((tryReceiveAttempt--) > 0) SetTimerTask((TaskMng)receiveFrom,size,(BaseParam_t)result,2);
+	if((tryReceiveAttempt--) > 0) SetTimerTask((TaskMng)receiveFrom,size,(BaseParam_t)result,TIME_DELAY_IF_BUSY);
 	else {
 		tryReceiveAttempt = ATTEMPT;
 		execCallBack(receiveFrom);
